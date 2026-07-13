@@ -35,7 +35,7 @@ def _build_image_content(path: str, max_dimension: int | None) -> MCPImage:
 # Synchronous render tools
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(output_schema=None)
 async def daz_render(
     output_path: str | None = None,
     return_image_data: bool = False,
@@ -72,7 +72,7 @@ async def daz_render(
     return result
 
 
-@mcp.tool()
+@mcp.tool(output_schema=None)
 async def daz_render_with_camera(
     camera_label: str,
     output_path: str | None = None,
@@ -555,7 +555,7 @@ async def daz_get_request_status(request_id: str) -> dict[str, Any]:
     return response.json()
 
 
-@mcp.tool()
+@mcp.tool(output_schema=None)
 async def daz_get_request_result(
     request_id: str,
     wait: bool = True,

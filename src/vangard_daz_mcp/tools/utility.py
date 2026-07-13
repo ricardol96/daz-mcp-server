@@ -7,6 +7,7 @@ import asyncio
 import json
 import re
 from datetime import datetime
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -42,14 +43,23 @@ _call_stats: dict[str, int] = {}
 
 @mcp.tool()
 async def daz_status() -> dict[str, Any]:
-    """Check DAZ Studio connectivity. Returns server status and version."""
+    """Check DAZ Studio connectivity. Returns MCP server and DazScriptServer status/version.
+
+    Returns:
+      - mcp_server_version: version of this MCP server (vangard-daz-mcp)
+      - running: true if the DazScriptServer plugin responded
+      - version: DazScriptServer plugin version — a different piece of software
+                 running inside DAZ Studio, not this MCP server
+    """
     client = get_http_client()
     try:
         response = await client.get("/status")
         check_response(response)
-        return response.json()
+        result = response.json()
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
         handle_network_error(exc)
+    result["mcp_server_version"] = _pkg_version("vangard-daz-mcp")
+    return result
 
 
 @mcp.tool()

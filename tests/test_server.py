@@ -105,7 +105,8 @@ async def test_daz_status_ok(mock_daz):
     )
     result = await daz_status()
     assert result["running"] is True
-    assert result["version"] == "1.0.0.0"
+    assert result["version"] == "1.0.0.0", "DazScriptServer plugin version — separate from the MCP server"
+    assert result["mcp_server_version"], "vangard-daz-mcp's own version, distinct from the plugin's"
 
 
 async def test_daz_status_connect_error(mock_daz):
