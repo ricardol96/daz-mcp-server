@@ -2,15 +2,33 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 from typing import Any
 
 import httpx
 from fastmcp.exceptions import ToolError
+from fastmcp.utilities.types import Image as MCPImage
+from PIL import Image as PILImage
 
 from .._mcp import mcp, _execute_by_id, _execute_by_id_async, _execute_render, _execute_render_batch
 from .._client import get_http_client
 from .._errors import handle_network_error, check_response
+
+
+def _build_image_content(path: str, max_dimension: int | None) -> MCPImage:
+    """Read an image file from disk as MCP image content, optionally downscaled.
+
+    Downscaling re-encodes as PNG regardless of source format, since thumbnail()
+    can produce modes (e.g. palette) that not every original format accepts.
+    """
+    if max_dimension is None:
+        return MCPImage(path=path)
+    with PILImage.open(path) as im:
+        im.thumbnail((max_dimension, max_dimension))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return MCPImage(data=buf.getvalue(), format="png")
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +38,9 @@ from .._errors import handle_network_error, check_response
 @mcp.tool()
 async def daz_render(
     output_path: str | None = None,
-) -> dict[str, Any]:
+    return_image_data: bool = False,
+    max_dimension: int | None = 1024,
+) -> dict[str, Any] | list[Any]:
     """Trigger a render in DAZ Studio using the current render settings.
 
     Render dimensions, format, and other options are whatever is currently
@@ -30,21 +50,35 @@ async def daz_render(
         output_path: Optional absolute path for the output image
                      (e.g. "C:/renders/scene.png"). If omitted, DAZ Studio
                      uses its currently configured output path.
+        return_image_data: If true, also return the rendered image as inline
+                     image content (for MCP clients, e.g. chat UIs, that can't
+                     read the local filesystem). Requires output_path — if
+                     omitted, image data cannot be attached since the actual
+                     output location isn't reported back by DAZ Studio.
+        max_dimension: When return_image_data is true, downscale so neither
+                     dimension exceeds this many pixels (default 1024, keeps
+                     inline payloads chat-sized). Pass None for full resolution.
 
     Returns:
       - success: true when the render was launched without error
+      - If return_image_data is true: a list of [result_dict, image_content].
     """
     args: dict[str, Any] = {}
     if output_path is not None:
         args["outputPath"] = output_path
-    return await _execute_by_id("vangard-render", args or None)
+    result = await _execute_by_id("vangard-render", args or None)
+    if return_image_data and output_path is not None and os.path.isfile(output_path):
+        return [result, _build_image_content(output_path, max_dimension)]
+    return result
 
 
 @mcp.tool()
 async def daz_render_with_camera(
     camera_label: str,
     output_path: str | None = None,
-) -> dict[str, Any]:
+    return_image_data: bool = False,
+    max_dimension: int | None = 1024,
+) -> dict[str, Any] | list[Any]:
     """Render from specific camera without changing active viewport camera.
 
     Renders the scene from the specified camera's viewpoint. The viewport camera
@@ -54,11 +88,19 @@ async def daz_render_with_camera(
     Args:
         camera_label: Display label of the camera to render from.
         output_path: Optional output file path. If not specified, renders to viewport.
+        return_image_data: If true, also return the rendered image as inline
+                     image content (for MCP clients, e.g. chat UIs, that can't
+                     read the local filesystem). Requires output_path — rendering
+                     to viewport (no output_path) produces no file to attach.
+        max_dimension: When return_image_data is true, downscale so neither
+                     dimension exceeds this many pixels (default 1024, keeps
+                     inline payloads chat-sized). Pass None for full resolution.
 
     Returns:
       - success: true on success
       - camera: camera label used for render
       - outputPath: output file path (or null if rendered to viewport)
+      - If return_image_data is true: a list of [result_dict, image_content].
 
     Example:
         # Render from specific camera
@@ -72,6 +114,9 @@ async def daz_render_with_camera(
         # Test render from camera (to viewport, no file)
         daz_render_with_camera("Camera 1")
 
+        # Render and see the result inline (e.g. from a chat client)
+        daz_render_with_camera("Camera 1", output_path="/tmp/check.png", return_image_data=True)
+
     Note:
         - Viewport camera remains unchanged after render
         - Previous render camera is restored automatically
@@ -82,7 +127,10 @@ async def daz_render_with_camera(
     if output_path is not None:
         args["outputPath"] = output_path
 
-    return await _execute_by_id("vangard-render-with-camera", args)
+    result = await _execute_by_id("vangard-render-with-camera", args)
+    if return_image_data and output_path is not None and os.path.isfile(output_path):
+        return [result, _build_image_content(output_path, max_dimension)]
+    return result
 
 
 @mcp.tool()
@@ -512,7 +560,9 @@ async def daz_get_request_result(
     request_id: str,
     wait: bool = True,
     timeout_seconds: int = 3600,
-) -> dict[str, Any]:
+    return_image_data: bool = False,
+    max_dimension: int | None = 1024,
+) -> dict[str, Any] | list[Any]:
     """Get the result of a completed async request.
 
     Args:
@@ -520,6 +570,14 @@ async def daz_get_request_result(
         wait: If True (default), block until the request finishes (up to timeout).
               If False, return immediately with current status even if not done.
         timeout_seconds: Max seconds to wait when wait=True (default 3600 = 1 hour).
+        return_image_data: If true and this was a single-image render request
+                     (e.g. from daz_render_async / daz_render_with_camera_async, or
+                     one request_id from a batch), also return the rendered image
+                     as inline image content. Ignored for non-render requests or
+                     multi-file results (e.g. animation frame sequences).
+        max_dimension: When return_image_data is true, downscale so neither
+                     dimension exceeds this many pixels (default 1024, keeps
+                     inline payloads chat-sized). Pass None for full resolution.
 
     Returns when complete:
         {
@@ -532,6 +590,8 @@ async def daz_get_request_result(
             "duration_ms": 267000,
             "completed_at": "2026-04-08T..."
         }
+        If return_image_data is true and a single output file was found: a list
+        of [result_dict, image_content].
 
     Raises ToolError if the request failed.
     """
@@ -556,6 +616,13 @@ async def daz_get_request_result(
         raise ToolError(f"Async request failed: {data.get('error', 'unknown error')}")
     if status == "cancelled":
         return data
+
+    if return_image_data and status == "completed":
+        result = data.get("result")
+        if isinstance(result, dict):
+            path = result.get("output_path") or result.get("outputPath")
+            if isinstance(path, str) and os.path.isfile(path):
+                return [data, _build_image_content(path, max_dimension)]
     return data
 
 
