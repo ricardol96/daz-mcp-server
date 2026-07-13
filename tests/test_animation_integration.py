@@ -19,7 +19,7 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp.server import (
+from vangard_daz_mcp.tools.animation import (
     daz_clear_animation,
     daz_get_animation_info,
     daz_get_keyframes,
@@ -27,6 +27,8 @@ from vangard_daz_mcp.server import (
     daz_set_frame,
     daz_set_frame_range,
     daz_set_keyframe,
+)
+from vangard_daz_mcp.tools.cinematic import (
     daz_sync_character_beats,
     daz_time_expression,
 )

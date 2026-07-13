@@ -28,27 +28,29 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp.server import (
-    daz_animate_camera_movement,
-    daz_animate_focus_pull,
+from vangard_daz_mcp.tools.animation import daz_clear_animation
+from vangard_daz_mcp.tools.camera_light import (
     daz_apply_camera_angle,
     daz_apply_composition_rule,
-    daz_clear_animation,
-    daz_create_camera_path,
-    daz_create_camera_rig,
-    daz_create_storyboard,
-    daz_delete_node,
     daz_frame_camera_to_node,
     daz_frame_shot,
     daz_list_cameras,
     daz_load_camera_preset,
     daz_orbit_camera_around,
-    daz_plan_shot,
     daz_save_camera_preset,
     daz_set_active_camera,
+)
+from vangard_daz_mcp.tools.cinematic import (
+    daz_animate_camera_movement,
+    daz_animate_focus_pull,
+    daz_create_camera_path,
+    daz_create_camera_rig,
+    daz_create_storyboard,
+    daz_plan_shot,
     daz_set_focus_point,
     daz_setup_shot_coverage,
 )
+from vangard_daz_mcp.tools.transform import daz_delete_node
 
 
 # ---------------------------------------------------------------------------

@@ -17,16 +17,72 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp.server import (
+from vangard_daz_mcp.tools.figure import (
     daz_interactive_pose,
-    daz_list_morphs,
     daz_look_at_character,
     daz_look_at_point,
     daz_reach_toward,
+    daz_reset_pose,
+)
+from vangard_daz_mcp.tools.morph import (
+    daz_list_morphs,
     daz_search_morphs,
     daz_set_emotion,
-    daz_set_property,
 )
+from vangard_daz_mcp.tools.scene import daz_restore_scene_state, daz_save_scene_state, daz_scene_info
+from vangard_daz_mcp.tools.transform import daz_set_property
+
+
+# ---------------------------------------------------------------------------
+# Cleanup fixtures
+#
+# daz_set_emotion mutates morphs on the root skeleton object, which the
+# scene-state checkpoint fully captures/restores. daz_look_at_point,
+# daz_look_at_character, daz_reach_toward, and daz_interactive_pose all
+# rotate individual skeleton bones instead — there is no bulk bone-transform
+# snapshot tool, so the best available cleanup is resetting to a known clean
+# baseline via daz_reset_pose. That is NOT equivalent to restoring whatever
+# custom pose the figure had before the suite ran; only run this file
+# against a disposable/scratch scene, not one with a pose you care about.
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture()
+async def clean_emotion(live_client, figure_label):
+    checkpoint = "_test_actors_emotion_checkpoint"
+    await daz_save_scene_state(checkpoint)
+    yield
+    await daz_restore_scene_state(checkpoint)
+
+
+@pytest_asyncio.fixture()
+async def clean_pose(live_client, figure_label):
+    yield
+    try:
+        await daz_reset_pose(figure_label, zero_transforms=True)
+    except ToolError:
+        pass
+
+
+@pytest_asyncio.fixture()
+async def clean_pose_both(live_client, figure_label):
+    """Reset every figure actually present, not just the two named fixtures.
+
+    Deliberately does not depend on the second_figure_label fixture — that
+    fixture skips the test outright when fewer than 2 figures are loaded,
+    which would wrongly block single-figure tests (e.g. not-found error
+    cases) that never touch a second figure.
+    """
+    yield
+    try:
+        scene = await daz_scene_info()
+        labels = {f["label"] for f in scene.get("figures", [])}
+    except Exception:
+        labels = {figure_label}
+    for label in labels:
+        try:
+            await daz_reset_pose(label, zero_transforms=True)
+        except ToolError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +164,7 @@ class TestSearchMorphs:
 # daz_set_emotion
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("clean_emotion")
 class TestSetEmotion:
     async def test_happy_emotion(self, live_client, figure_label):
         result = await daz_set_emotion(figure_label, "happy", intensity=0.5)
@@ -142,6 +199,7 @@ class TestSetEmotion:
 # daz_look_at_point
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("clean_pose")
 class TestLookAtPoint:
     # Targets are deliberately off-axis so rotation is large and visually obvious.
     # Character stands at origin facing +Z; looking hard right (+X) forces ~90° head turn.
@@ -184,6 +242,7 @@ class TestLookAtPoint:
 # daz_look_at_character
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("clean_pose_both")
 class TestLookAtCharacter:
     async def test_look_at_second_character(
         self, live_client, figure_label, second_figure_label
@@ -214,6 +273,7 @@ class TestLookAtCharacter:
 # daz_reach_toward
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("clean_pose")
 class TestReachToward:
     async def test_right_arm(self, live_client, figure_label):
         result = await daz_reach_toward(figure_label, "right", 50.0, 120.0, 80.0)
@@ -236,6 +296,7 @@ class TestReachToward:
 # daz_interactive_pose
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("clean_pose_both")
 class TestInteractivePose:
     async def test_face_each_other(
         self, live_client, figure_label, second_figure_label

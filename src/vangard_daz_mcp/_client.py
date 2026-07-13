@@ -91,6 +91,17 @@ def get_scene() -> DazScene:
     return _daz_scene
 
 
+def set_scene(scene: DazScene | None) -> None:
+    """Override the DazScene singleton — for injecting a test double.
+
+    Without this, tests that mock only the httpx client (e.g. via respx) can
+    silently fall through to a real DazScene/DazClient connection for any tool
+    that uses get_scene()/run_dazpy(), reaching a live DAZ Studio instance.
+    """
+    global _daz_scene
+    _daz_scene = scene
+
+
 async def run_dazpy(fn: Callable[[], _T]) -> _T:
     """Run a synchronous dazpy call in a thread pool to avoid blocking the event loop."""
     return await asyncio.to_thread(fn)

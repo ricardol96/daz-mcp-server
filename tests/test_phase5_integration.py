@@ -23,29 +23,28 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-import vangard_daz_mcp.server as server_module
-from vangard_daz_mcp.server import (
-    # Core
-    _register_scripts,
-    daz_scene_info,
-    # Phase 5 tools under test
-    daz_list_materials,
-    daz_get_material,
-    daz_set_material_property,
-    daz_set_morph,
-    daz_delete_node,
-    daz_list_lights,
+from vangard_daz_mcp._client import set_http_client
+from vangard_daz_mcp._registry import _register_scripts
+from vangard_daz_mcp.tools.camera_light import (
+    daz_create_camera,
     daz_create_light,
     daz_list_cameras,
-    daz_create_camera,
-    daz_save_scene,
-    daz_get_selected_nodes,
-    daz_set_render_output,
-    daz_reset_pose,
-    # Helpers used for setup / teardown
-    daz_set_property,
-    daz_search_morphs,
+    daz_list_lights,
 )
+from vangard_daz_mcp.tools.figure import daz_reset_pose
+from vangard_daz_mcp.tools.material import (
+    daz_get_material,
+    daz_list_materials,
+    daz_set_material_property,
+)
+from vangard_daz_mcp.tools.morph import daz_search_morphs, daz_set_morph
+from vangard_daz_mcp.tools.render import daz_set_render_output
+from vangard_daz_mcp.tools.scene import (
+    daz_get_selected_nodes,
+    daz_save_scene,
+    daz_scene_info,
+)
+from vangard_daz_mcp.tools.transform import daz_delete_node, daz_set_property
 
 BASE_URL = "http://localhost:18811"
 
@@ -81,7 +80,7 @@ async def live_client():
         pytest.skip(f"DAZ Studio not reachable at {BASE_URL}")
 
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
-        server_module._http_client = client
+        set_http_client(client)
 
         # Register scripts once per process (cached flag).
         if not _cache.get("scripts_registered"):
@@ -90,7 +89,7 @@ async def live_client():
 
         yield client
 
-    server_module._http_client = None
+    set_http_client(None)
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +641,24 @@ class TestSetRenderOutput:
 # ===========================================================================
 
 class TestResetPose:
+    """Every test here mutates figure_label's actual bone rotations and root
+    transform (whatever character is really loaded). daz_reset_pose has no
+    counterpart that restores an arbitrary pre-existing custom pose — there's
+    no bulk bone-transform snapshot tool — so the best available cleanup is to
+    return the figure to a known clean baseline (zeroed pose/transform) via
+    the tool under test itself. This is NOT equivalent to restoring whatever
+    custom pose the figure had before the suite ran; only run this file
+    against a disposable/scratch scene, not one with a pose you care about.
+    """
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def clean_pose(self, live_client, figure_label):
+        yield
+        try:
+            await daz_reset_pose(figure_label, zero_transforms=True)
+        except ToolError:
+            pass
+
     async def test_resets_bone_rotations(self, live_client, figure_label):
         """Apply a rotation to the figure root, reset, verify it's zeroed."""
         # Tilt the figure slightly
