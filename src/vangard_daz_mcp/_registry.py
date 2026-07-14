@@ -75,44 +75,6 @@ _SCENE_INFO_SCRIPT = """\
 # args: {nodeLabel}
 # Returns: {name, label, type, properties:{label:value}}
 # Searches by label first, then internal name.
-_GET_NODE_SCRIPT = """\
-(function(){
-    var args = getArguments()[0] || {};
-    var n = Scene.findNodeByLabel(args.nodeLabel);
-    if (!n) n = Scene.findNode(args.nodeLabel);
-    if (!n) throw new Error("Node not found: " + args.nodeLabel);
-    var props = {};
-    for (var p = 0; p < n.getNumProperties(); p++) {
-        var pr = n.getProperty(p);
-        if (pr.inherits("DzNumericProperty")) props[pr.getLabel()] = pr.getValue();
-    }
-    return { name: n.getName(), label: n.getLabel(), type: n.className(), properties: props };
-})()
-"""
-
-# args: {nodeLabel, propertyName, value}
-# Returns: {node, property, value}
-# Matches propertyName against both display label and internal name.
-_SET_PROPERTY_SCRIPT = """\
-(function(){
-    var args = getArguments()[0] || {};
-    var n = Scene.findNodeByLabel(args.nodeLabel);
-    if (!n) n = Scene.findNode(args.nodeLabel);
-    if (!n) throw new Error("Node not found: " + args.nodeLabel);
-    var prop = null;
-    for (var p = 0; p < n.getNumProperties(); p++) {
-        var pr = n.getProperty(p);
-        if (pr.getLabel() === args.propertyName || pr.getName() === args.propertyName) {
-            prop = pr; break;
-        }
-    }
-    if (!prop) throw new Error("Property not found: " + args.propertyName + " on " + args.nodeLabel);
-    if (!prop.inherits("DzNumericProperty")) throw new Error("Property is not numeric: " + args.propertyName);
-    prop.setValue(args.value);
-    return { node: n.getLabel(), property: prop.getLabel(), value: prop.getValue() };
-})()
-"""
-
 # args: {outputPath?}
 # Returns: {success}
 # Render options are set directly on the DzRenderOptions object (Qt property syntax).
@@ -6930,14 +6892,6 @@ _REGISTRY: dict[str, tuple[str, str]] = {
     "vangard-scene-info": (
         "Return a snapshot of the current DAZ Studio scene",
         _SCENE_INFO_SCRIPT,
-    ),
-    "vangard-get-node": (
-        "Return all numeric properties of a scene node by label",
-        _GET_NODE_SCRIPT,
-    ),
-    "vangard-set-property": (
-        "Set a numeric property on a scene node",
-        _SET_PROPERTY_SCRIPT,
     ),
     "vangard-render": (
         "Trigger a render using current DAZ Studio render settings",

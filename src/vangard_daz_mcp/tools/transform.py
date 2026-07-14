@@ -2,9 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastmcp.exceptions import ToolError
+
 from .._mcp import mcp, _execute_by_id
 from .._client import get_scene, run_dazpy
 from .._errors import handle_dazpy_error
+
+
+def _find_node(scene: Any, node_label: str) -> Any:
+    """Find a node by label, falling back to internal name if no label matches."""
+    from dazpy.exceptions import NodeNotFoundError
+    try:
+        return scene.find_node_by_label(node_label)
+    except NodeNotFoundError:
+        return scene.find_node(node_label)
 
 
 @mcp.tool()
@@ -25,7 +36,19 @@ async def daz_get_node(node_label: str) -> dict[str, Any]:
       - type: DazScript class name (e.g. DzFigure, DzBone, DzCamera)
       - properties: mapping of property label → current numeric value
     """
-    return await _execute_by_id("vangard-get-node", {"nodeLabel": node_label})
+    def _run() -> dict[str, Any]:
+        node = _find_node(get_scene(), node_label)
+        return {
+            "name": node.name,
+            "label": node.label,
+            "type": node.class_name,
+            "properties": node.numeric_properties(),
+        }
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
@@ -53,10 +76,20 @@ async def daz_set_property(
       - property: property label as confirmed by DAZ Studio
       - value: the value read back after setting
     """
-    return await _execute_by_id(
-        "vangard-set-property",
-        {"nodeLabel": node_label, "propertyName": property_name, "value": value},
-    )
+    def _run() -> dict[str, Any]:
+        node = _find_node(get_scene(), node_label)
+        prop = node.find_property_by_label(property_name) or node.find_property(property_name)
+        if prop is None:
+            raise ToolError(f"Property not found: {property_name!r} on {node_label!r}")
+        prop.value = value
+        return {"node": node.label, "property": prop.label, "value": prop.value}
+
+    try:
+        return await run_dazpy(_run)
+    except ToolError:
+        raise
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
