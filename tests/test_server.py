@@ -9,7 +9,7 @@ import httpx
 import dazpy.exceptions as daz_exc
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp._client import set_http_client, set_scene
+from vangard_daz_mcp._client import set_daz_client, set_http_client, set_scene
 from vangard_daz_mcp._registry import _register_scripts
 from vangard_daz_mcp.tools.render import (
     daz_batch_render_cameras_async,
@@ -72,6 +72,23 @@ def mock_scene():
     set_scene(None)
 
 
+@pytest.fixture(autouse=True)
+def mock_client():
+    """Replace the dazpy DazClient singleton with a MagicMock.
+
+    Tools that go through get_daz_client()/run_dazpy() directly (e.g.
+    daz_status, daz_execute, daz_execute_file, daz_inspect_properties) use a
+    separate connection from the httpx client that respx mocks. Without this,
+    those calls silently fall through to a real DazClient and can reach a
+    live, shared DAZ Studio instance — do not remove this without giving
+    every dazpy-routed tool an explicit mock in its own test.
+    """
+    client = MagicMock()
+    set_daz_client(client)
+    yield client
+    set_daz_client(None)
+
+
 @pytest.fixture
 def mock_daz():
     """Activate respx mock router for the DazScriptServer base URL."""
@@ -96,84 +113,89 @@ def _fail(error, output=None):
 
 
 # ---------------------------------------------------------------------------
-# daz_status
+# daz_status — routes through get_daz_client().status() (dazpy), not httpx
 # ---------------------------------------------------------------------------
 
-async def test_daz_status_ok(mock_daz):
-    mock_daz.get("/status").mock(
-        return_value=httpx.Response(200, json={"running": True, "version": "1.0.0.0"})
-    )
+async def test_daz_status_ok(mock_client):
+    mock_client.status.return_value = {"running": True, "version": "1.0.0.0"}
     result = await daz_status()
     assert result["running"] is True
     assert result["version"] == "1.0.0.0", "DazScriptServer plugin version — separate from the MCP server"
     assert result["mcp_server_version"], "vangard-daz-mcp's own version, distinct from the plugin's"
 
 
-async def test_daz_status_connect_error(mock_daz):
-    mock_daz.get("/status").mock(side_effect=httpx.ConnectError("refused"))
+async def test_daz_status_connect_error(mock_client):
+    mock_client.status.side_effect = daz_exc.ConnectionError("refused")
     with pytest.raises(ToolError, match="DAZ Studio is running"):
         await daz_status()
 
 
-async def test_daz_status_unauthorized(mock_daz):
-    mock_daz.get("/status").mock(return_value=httpx.Response(401))
-    with pytest.raises(ToolError, match="401"):
+async def test_daz_status_unauthorized(mock_client):
+    mock_client.status.side_effect = daz_exc.AuthenticationError("HTTP 401")
+    with pytest.raises(ToolError, match="Authentication failed"):
         await daz_status()
 
 
 # ---------------------------------------------------------------------------
-# daz_execute
+# daz_execute — routes through get_daz_client().execute() (dazpy), not httpx
 # ---------------------------------------------------------------------------
 
-async def test_daz_execute_success(mock_daz):
-    mock_daz.post("/execute").mock(return_value=_ok(42))
+async def test_daz_execute_success(mock_client):
+    from dazpy import ExecutionResult
+    mock_client.execute.return_value = ExecutionResult(value=42, output=[], success=True)
     result = await daz_execute(script="return 42;")
     assert result["success"] is True
     assert result["result"] == 42
 
 
-async def test_daz_execute_with_args(mock_daz):
-    mock_daz.post("/execute").mock(return_value=_ok("ok"))
+async def test_daz_execute_with_args(mock_client):
+    from dazpy import ExecutionResult
+    mock_client.execute.return_value = ExecutionResult(value="ok", output=[], success=True)
     result = await daz_execute(script="return args.x;", args={"x": 99})
     assert result["success"] is True
 
 
-async def test_daz_execute_script_failure(mock_daz):
-    mock_daz.post("/execute").mock(return_value=_fail("ReferenceError: foo is not defined", ["line1"]))
+async def test_daz_execute_script_failure(mock_client):
+    mock_client.execute.side_effect = daz_exc.ScriptRuntimeError(
+        "ReferenceError: foo is not defined", script="foo();", output=["line1"]
+    )
     with pytest.raises(ToolError, match="ReferenceError"):
         await daz_execute(script="foo();")
 
 
-async def test_daz_execute_output_appended_to_error(mock_daz):
-    mock_daz.post("/execute").mock(return_value=_fail("SomeError", ["debug line"]))
+async def test_daz_execute_output_appended_to_error(mock_client):
+    mock_client.execute.side_effect = daz_exc.ScriptRuntimeError(
+        "SomeError", script="bad();", output=["debug line"]
+    )
     with pytest.raises(ToolError, match="debug line"):
         await daz_execute(script="bad();")
 
 
-async def test_daz_execute_timeout(mock_daz):
-    mock_daz.post("/execute").mock(side_effect=httpx.ReadTimeout("timed out"))
+async def test_daz_execute_timeout(mock_client):
+    mock_client.execute.side_effect = daz_exc.TimeoutError("timed out")
     with pytest.raises(ToolError, match="DAZ_TIMEOUT"):
         await daz_execute(script="while(true){}")
 
 
-async def test_daz_execute_unauthorized(mock_daz):
-    mock_daz.post("/execute").mock(return_value=httpx.Response(401))
-    with pytest.raises(ToolError, match="401"):
+async def test_daz_execute_unauthorized(mock_client):
+    mock_client.execute.side_effect = daz_exc.AuthenticationError("HTTP 401")
+    with pytest.raises(ToolError, match="Authentication failed"):
         await daz_execute(script="return 1;")
 
 
 # ---------------------------------------------------------------------------
-# daz_execute_file
+# daz_execute_file — routes through get_daz_client().execute_file() (dazpy)
 # ---------------------------------------------------------------------------
 
-async def test_daz_execute_file_success(mock_daz):
-    mock_daz.post("/execute").mock(return_value=_ok("done"))
+async def test_daz_execute_file_success(mock_client):
+    from dazpy import ExecutionResult
+    mock_client.execute_file.return_value = ExecutionResult(value="done", output=[], success=True)
     result = await daz_execute_file(script_file="C:/scripts/test.dsa")
     assert result["result"] == "done"
 
 
-async def test_daz_execute_file_failure(mock_daz):
-    mock_daz.post("/execute").mock(return_value=_fail("File not found"))
+async def test_daz_execute_file_failure(mock_client):
+    mock_client.execute_file.side_effect = daz_exc.ScriptRuntimeError("File not found")
     with pytest.raises(ToolError, match="File not found"):
         await daz_execute_file(script_file="C:/scripts/missing.dsa")
 

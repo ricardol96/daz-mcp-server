@@ -84,6 +84,17 @@ def get_daz_client() -> DazClient:
     return _daz_client
 
 
+def set_daz_client(client: DazClient | None) -> None:
+    """Override the DazClient singleton — for injecting a test double.
+
+    Without this, tests that mock only the httpx client (e.g. via respx) can
+    silently fall through to a real DazClient for any tool that uses
+    get_daz_client()/run_dazpy(), reaching a live DAZ Studio instance.
+    """
+    global _daz_client
+    _daz_client = client
+
+
 def get_scene() -> DazScene:
     global _daz_scene
     if _daz_scene is None:

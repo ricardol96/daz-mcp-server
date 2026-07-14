@@ -14,9 +14,9 @@ from typing import Any
 import httpx
 from fastmcp.exceptions import ToolError
 
-from .._mcp import mcp, _execute, _execute_by_id, _execute_by_id_async
-from .._client import get_http_client
-from .._errors import handle_network_error, check_response
+from .._mcp import mcp, _execute_by_id
+from .._client import get_daz_client, get_http_client, get_scene, run_dazpy
+from .._errors import handle_dazpy_error, handle_network_error, check_response
 
 # ---------------------------------------------------------------------------
 # Module-level state
@@ -37,6 +37,280 @@ _call_stats: dict[str, int] = {}
 
 
 # ---------------------------------------------------------------------------
+# Inline scripts for tools that need custom introspection/aggregation logic
+# beyond what dazpy's typed primitives expose directly. Routed through
+# DazClient.execute() (dazpy) rather than the httpx-based script registry.
+# ---------------------------------------------------------------------------
+
+# args: {nodeLabel, propertyType}. Returns: {node, properties: [...], count}
+_INSPECT_PROPERTIES_SCRIPT = """\
+(function(){
+    var args = getArguments()[0] || {};
+    var node = Scene.findNodeByLabel(args.nodeLabel);
+    if (!node) node = Scene.findNode(args.nodeLabel);
+    if (!node) throw new Error("Node not found: " + args.nodeLabel);
+
+    var typeFilter = args.propertyType || "all";
+
+    var TRANSFORM_NAMES = {
+        "XTranslate": 1, "YTranslate": 1, "ZTranslate": 1,
+        "XRotate": 1, "YRotate": 1, "ZRotate": 1,
+        "Scale": 1, "XScale": 1, "YScale": 1, "ZScale": 1
+    };
+
+    var props = [];
+    for (var i = 0; i < node.getNumProperties(); i++) {
+        var prop = node.getProperty(i);
+        var className = prop.className();
+        var isNumeric = prop.inherits("DzNumericProperty");
+        var isBool = className === "DzBoolProperty";
+        var isTransform = TRANSFORM_NAMES[prop.getName()] === 1;
+        var isString = className === "DzStringProperty";
+
+        var include = false;
+        if (typeFilter === "all") include = true;
+        else if (typeFilter === "numeric" && isNumeric) include = true;
+        else if (typeFilter === "transform" && isTransform) include = true;
+        else if (typeFilter === "bool" && isBool) include = true;
+        else if (typeFilter === "string" && isString) include = true;
+        else if (typeFilter === "morph" && isNumeric && !isTransform) include = true;
+
+        if (!include) continue;
+
+        var entry = {
+            label: prop.getLabel(),
+            name: prop.getName(),
+            type: className,
+            path: prop.getPath ? prop.getPath() : "",
+            is_animatable: prop.isAnimatable ? prop.isAnimatable() : false
+        };
+
+        if (isNumeric) {
+            entry.value = prop.getValue();
+            entry.min = prop.getMin ? prop.getMin() : null;
+            entry.max = prop.getMax ? prop.getMax() : null;
+        } else if (isString && prop.getValue) {
+            entry.value = prop.getValue();
+            entry.min = null;
+            entry.max = null;
+        } else {
+            entry.value = null;
+            entry.min = null;
+            entry.max = null;
+        }
+
+        props.push(entry);
+    }
+
+    return { node: node.getLabel(), properties: props, count: props.length };
+})()
+"""
+
+# args: {nodeLabel, propertyName}
+# Returns: {label, name, type, current_value, default_value, min, max, is_animatable, path, node}
+_GET_PROPERTY_METADATA_SCRIPT = """\
+(function(){
+    var args = getArguments()[0] || {};
+    var node = Scene.findNodeByLabel(args.nodeLabel);
+    if (!node) node = Scene.findNode(args.nodeLabel);
+    if (!node) throw new Error("Node not found: " + args.nodeLabel);
+
+    var prop = null;
+    for (var i = 0; i < node.getNumProperties(); i++) {
+        var p = node.getProperty(i);
+        if (p.getLabel() === args.propertyName || p.getName() === args.propertyName) {
+            prop = p; break;
+        }
+    }
+    if (!prop) throw new Error("Property not found: " + args.propertyName +
+                                " on " + args.nodeLabel);
+
+    var isNumeric = prop.inherits("DzNumericProperty");
+
+    return {
+        label: prop.getLabel(),
+        name: prop.getName(),
+        type: prop.className(),
+        current_value: isNumeric ? prop.getValue() : null,
+        default_value: (isNumeric && prop.getDefaultValue) ? prop.getDefaultValue() : null,
+        min: (isNumeric && prop.getMin) ? prop.getMin() : null,
+        max: (isNumeric && prop.getMax) ? prop.getMax() : null,
+        is_animatable: prop.isAnimatable ? prop.isAnimatable() : false,
+        path: prop.getPath ? prop.getPath() : "",
+        node: node.getLabel()
+    };
+})()
+"""
+
+# args: {operations: [{nodeLabel, propertyName, value}]}
+# Returns: {results: [...], successCount, failureCount, total}
+_BATCH_SET_PROPERTIES_SCRIPT = """\
+(function(){
+    var args = getArguments()[0] || {};
+    var operations = args.operations || [];
+    var results = [];
+    var successCount = 0;
+    var failureCount = 0;
+
+    for (var i = 0; i < operations.length; i++) {
+        var op = operations[i];
+        var result = { success: false, node: op.nodeLabel };
+
+        try {
+            var n = Scene.findNodeByLabel(op.nodeLabel);
+            if (!n) n = Scene.findNode(op.nodeLabel);
+            if (!n) throw new Error("Node not found: " + op.nodeLabel);
+
+            var prop = null;
+            for (var p = 0; p < n.getNumProperties(); p++) {
+                var pr = n.getProperty(p);
+                if (pr.getLabel() === op.propertyName || pr.getName() === op.propertyName) {
+                    prop = pr;
+                    break;
+                }
+            }
+
+            if (!prop) throw new Error("Property not found: " + op.propertyName);
+            if (!prop.inherits("DzNumericProperty")) throw new Error("Property is not numeric: " + op.propertyName);
+
+            prop.setValue(op.value);
+            result.success = true;
+            result.property = prop.getLabel();
+            result.value = prop.getValue();
+            successCount++;
+        } catch (e) {
+            result.error = e.message || String(e);
+            failureCount++;
+        }
+
+        results.push(result);
+    }
+
+    return {
+        results: results,
+        successCount: successCount,
+        failureCount: failureCount,
+        total: operations.length
+    };
+})()
+"""
+
+# args: none. Returns: {valid, issues, warnings, score, score_breakdown, summary}
+_VALIDATE_SCENE_SCRIPT = """\
+(function(){
+    var issues = [];
+    var warnings = [];
+
+    // --- 1. Collision detection between figures (bounding box AABB) ---
+    var figures = [];
+    for (var i = 0; i < Scene.getNumSkeletons(); i++) {
+        var skel = Scene.getSkeleton(i);
+        var bb = skel.getWSBoundingBox();
+        figures.push({ label: skel.getLabel(), bb: bb });
+    }
+
+    for (var a = 0; a < figures.length; a++) {
+        for (var b = a + 1; b < figures.length; b++) {
+            var f1 = figures[a];
+            var f2 = figures[b];
+            var overlapX = Math.min(f1.bb.maxX, f2.bb.maxX) - Math.max(f1.bb.minX, f2.bb.minX);
+            var overlapY = Math.min(f1.bb.maxY, f2.bb.maxY) - Math.max(f1.bb.minY, f2.bb.minY);
+            var overlapZ = Math.min(f1.bb.maxZ, f2.bb.maxZ) - Math.max(f1.bb.minZ, f2.bb.minZ);
+
+            if (overlapX > 0 && overlapY > 0 && overlapZ > 0) {
+                var depth = Math.round(Math.min(overlapX, overlapY, overlapZ));
+                issues.push({
+                    type: "collision",
+                    severity: "high",
+                    nodes: [f1.label, f2.label],
+                    description: f1.label + " and " + f2.label +
+                                 " bounding boxes overlap by ~" + depth + " cm",
+                    suggestion: "Move one character away to resolve interpenetration"
+                });
+            }
+        }
+    }
+
+    // --- 2. Lighting checks ---
+    var numLights = Scene.getNumLights();
+    var envNode = Scene.getNode(1);
+    var envMode = envNode ? envNode.findProperty("Environment Mode") : null;
+    var envModeVal = envMode ? envMode.getValue() : 0;
+    var hasEnvLight = (envModeVal !== 3);  // not scene-only -> env dome contributes
+
+    if (numLights === 0 && !hasEnvLight) {
+        issues.push({
+            type: "no-lights",
+            severity: "high",
+            nodes: [],
+            description: "Scene has no lights and environment lighting is disabled",
+            suggestion: "Use daz_apply_lighting_preset('three-point') to add lights"
+        });
+    } else if (numLights === 1) {
+        warnings.push({
+            type: "poor-lighting",
+            severity: "medium",
+            description: "Scene has only one light source, may cause harsh shadows",
+            suggestion: "Add a fill light at low intensity to soften shadows"
+        });
+    }
+
+    // --- 3. Camera framing check ---
+    var numCameras = Scene.getNumCameras();
+    if (numCameras === 0) {
+        warnings.push({
+            type: "no-camera",
+            severity: "medium",
+            description: "Scene has no cameras (will use default perspective view)",
+            suggestion: "Add a camera with daz_execute('var c = new DzBasicCamera(); Scene.addNode(c);')"
+        });
+    }
+
+    // --- 4. Empty scene check ---
+    var numFigures = Scene.getNumSkeletons();
+    if (numFigures === 0) {
+        warnings.push({
+            type: "no-figures",
+            severity: "low",
+            description: "Scene has no figures/characters",
+            suggestion: "Load a character with daz_load_file()"
+        });
+    }
+
+    // --- Score calculation ---
+    var lightScore = 100;
+    if (numLights === 0 && !hasEnvLight) lightScore = 0;
+    else if (numLights === 1) lightScore = 50;
+
+    var collisionScore = issues.filter(function(i){ return i.type === "collision"; }).length === 0 ? 100 : 30;
+    var cameraScore = numCameras > 0 ? 100 : 60;
+    var figureScore = numFigures > 0 ? 100 : 60;
+
+    var score = Math.round((lightScore + collisionScore + cameraScore + figureScore) / 4);
+
+    return {
+        valid: issues.length === 0,
+        issues: issues,
+        warnings: warnings,
+        score: score,
+        score_breakdown: {
+            lighting: lightScore,
+            collision: collisionScore,
+            camera: cameraScore,
+            figures: figureScore
+        },
+        summary: {
+            figures: numFigures,
+            cameras: numCameras,
+            lights: numLights,
+            environment_lighting: hasEnvLight
+        }
+    };
+})()
+"""
+
+
+# ---------------------------------------------------------------------------
 # Tools — connectivity / execution
 # ---------------------------------------------------------------------------
 
@@ -51,13 +325,10 @@ async def daz_status() -> dict[str, Any]:
       - version: DazScriptServer plugin version — a different piece of software
                  running inside DAZ Studio, not this MCP server
     """
-    client = get_http_client()
     try:
-        response = await client.get("/status")
-        check_response(response)
-        result = response.json()
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
-        handle_network_error(exc)
+        result = await run_dazpy(get_daz_client().status)
+    except Exception as e:
+        handle_dazpy_error(e)
     result["mcp_server_version"] = _pkg_version("vangard-daz-mcp")
     return result
 
@@ -95,27 +366,16 @@ async def daz_execute(
     Returns:
         Object with keys: success, result, output (list of print() lines), error.
     """
-    client = get_http_client()
-    payload: dict[str, Any] = {"script": script}
-    if args is not None:
-        payload["args"] = args
-
     try:
-        response = await client.post("/execute", json=payload)
-        check_response(response)
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
-        handle_network_error(exc)
-
-    result = response.json()
-    if not result.get("success", False):
-        output_lines = result.get("output", [])
-        error_msg = result.get("error") or "Script execution failed"
-        detail = error_msg
-        if output_lines:
-            detail += "\n\nCaptured output:\n" + "\n".join(output_lines)
-        raise ToolError(detail)
-
-    return result
+        result = await run_dazpy(lambda: get_daz_client().execute(script, args))
+    except Exception as e:
+        handle_dazpy_error(e)
+    return {
+        "success": result.success,
+        "result": result.value,
+        "output": result.output,
+        "error": result.error,
+    }
 
 
 @mcp.tool()
@@ -132,27 +392,16 @@ async def daz_execute_file(
     Returns:
         Object with keys: success, result, output (list of print() lines), error.
     """
-    client = get_http_client()
-    payload: dict[str, Any] = {"scriptFile": script_file}
-    if args is not None:
-        payload["args"] = args
-
     try:
-        response = await client.post("/execute", json=payload)
-        check_response(response)
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
-        handle_network_error(exc)
-
-    result = response.json()
-    if not result.get("success", False):
-        output_lines = result.get("output", [])
-        error_msg = result.get("error") or "Script execution failed"
-        detail = error_msg
-        if output_lines:
-            detail += "\n\nCaptured output:\n" + "\n".join(output_lines)
-        raise ToolError(detail)
-
-    return result
+        result = await run_dazpy(lambda: get_daz_client().execute_file(script_file, args))
+    except Exception as e:
+        handle_dazpy_error(e)
+    return {
+        "success": result.success,
+        "result": result.value,
+        "output": result.output,
+        "error": result.error,
+    }
 
 
 @mcp.tool()
@@ -246,7 +495,15 @@ async def daz_batch_set_properties(
         individually for each operation. All operations execute in a single
         script call to DAZ Studio.
     """
-    return await _execute_by_id("vangard-batch-set-properties", {"operations": operations})
+    def _run() -> dict:
+        return get_daz_client().execute(
+            _BATCH_SET_PROPERTIES_SCRIPT, {"operations": operations}
+        ).value
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
@@ -287,10 +544,16 @@ async def daz_inspect_properties(
             "count": 45
         }
     """
-    return await _execute_by_id("vangard-inspect-properties", {
-        "nodeLabel": node_label,
-        "propertyType": property_type,
-    })
+    def _run() -> dict:
+        return get_daz_client().execute(
+            _INSPECT_PROPERTIES_SCRIPT,
+            {"nodeLabel": node_label, "propertyType": property_type},
+        ).value
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
@@ -322,10 +585,16 @@ async def daz_get_property_metadata(
             "node": "Spotlight 1"
         }
     """
-    return await _execute_by_id("vangard-get-property-metadata", {
-        "nodeLabel": node_label,
-        "propertyName": property_name,
-    })
+    def _run() -> dict:
+        return get_daz_client().execute(
+            _GET_PROPERTY_METADATA_SCRIPT,
+            {"nodeLabel": node_label, "propertyName": property_name},
+        ).value
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +762,10 @@ async def daz_validate_scene() -> dict[str, Any]:
             }
         }
     """
-    return await _execute_by_id("vangard-validate-scene")
+    try:
+        return await run_dazpy(lambda: get_daz_client().execute(_VALIDATE_SCENE_SCRIPT).value)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -833,7 +1105,10 @@ async def daz_list_macros() -> dict[str, Any]:
 @mcp.tool()
 async def daz_auto_improve_scene() -> dict[str, Any]:
     """Automatically validate the scene and attempt to fix common issues."""
-    validation = await _execute_by_id("vangard-validate-scene")
+    try:
+        validation = await run_dazpy(lambda: get_daz_client().execute(_VALIDATE_SCENE_SCRIPT).value)
+    except Exception as e:
+        handle_dazpy_error(e)
     issues = validation.get("issues", []) if isinstance(validation, dict) else []
     fixed = []
     for issue in issues:
@@ -847,15 +1122,22 @@ async def daz_auto_improve_scene() -> dict[str, Any]:
 @mcp.tool()
 async def daz_suggest_next_action() -> dict[str, Any]:
     """Suggest the next action to take based on scene state."""
-    scene_info = await _execute_by_id("vangard-scene-info")
+    def _run() -> tuple[int, int, int]:
+        scene = get_scene()
+        return len(scene.skeletons()), len(scene.lights()), len(scene.cameras())
+
+    try:
+        num_figures, num_lights, num_cameras = await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
+
     suggestions = []
-    if isinstance(scene_info, dict):
-        if not scene_info.get("figures"):
-            suggestions.append({"action": "daz_load_file", "reason": "No figures in scene - load a character"})
-        if not scene_info.get("lights"):
-            suggestions.append({"action": "daz_create_light", "reason": "No lights - add lighting"})
-        if not scene_info.get("cameras"):
-            suggestions.append({"action": "daz_create_camera", "reason": "No cameras - add a camera"})
+    if not num_figures:
+        suggestions.append({"action": "daz_load_file", "reason": "No figures in scene - load a character"})
+    if not num_lights:
+        suggestions.append({"action": "daz_create_light", "reason": "No lights - add lighting"})
+    if not num_cameras:
+        suggestions.append({"action": "daz_create_camera", "reason": "No cameras - add a camera"})
     if not suggestions:
         suggestions.append({"action": "daz_render", "reason": "Scene looks ready to render"})
     return {"suggestions": suggestions}
