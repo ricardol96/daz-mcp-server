@@ -5,15 +5,94 @@ and pose file save/load via dazpy.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from fastmcp.exceptions import ToolError
 
-from dazpy import DazPose
+from dazpy import (
+    DazPose,
+    align_hand_target,
+    build_face_each_other_recipe,
+    build_handshake_recipe,
+    build_hug_recipe,
+    build_touch_recipe,
+)
+from dazpy.exceptions import NodeNotFoundError
 
-from .._mcp import mcp, _execute_by_id
+from .._mcp import mcp
 from .._client import get_scene, run_dazpy
 from .._errors import handle_dazpy_error
+
+# ---------------------------------------------------------------------------
+# Skeleton/bone lookup helpers
+# ---------------------------------------------------------------------------
+
+
+def _find_skeleton(scene: Any, label: str) -> Any:
+    """Find a skeleton by label, falling back to internal name if no label matches."""
+    try:
+        return scene.find_skeleton_by_label(label)
+    except NodeNotFoundError:
+        return scene.find_skeleton(label)
+
+
+def _find_bone_any(skeleton: Any, candidates: tuple[str, ...]) -> Any | None:
+    """Return the first bone matching any candidate internal name, or None."""
+    for name in candidates:
+        try:
+            return skeleton.find_bone(name)
+        except NodeNotFoundError:
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Cascading look-at rotation (eyes -> head -> neck -> torso -> hip)
+# Generation-agnostic bone candidates: Genesis 9 name first, Genesis 3/8 fallback.
+# ---------------------------------------------------------------------------
+
+_LOOK_AT_LEVELS: list[tuple[str, list[tuple[str, ...]], float]] = [
+    ("eyes", [("l_eye", "lEye"), ("r_eye", "rEye")], 1.0),
+    ("head", [("head",)], 0.6),
+    ("neck", [("neck2", "neckUpper"), ("neck1", "neckLower")], 0.3),
+    ("torso", [("spine3", "chestUpper"), ("spine2", "chestLower")], 0.15),
+    ("full", [("hip",)], 0.1),
+]
+
+_LOOK_AT_MODE_LEVELS: dict[str, list[str]] = {
+    "eyes": ["eyes"],
+    "head": ["eyes", "head"],
+    "neck": ["eyes", "head", "neck"],
+    "torso": ["eyes", "head", "neck", "torso"],
+    "full": ["eyes", "head", "neck", "torso", "full"],
+}
+
+
+def _rotate_bone_toward(bone: Any, target: tuple[float, float, float], scale: float) -> str:
+    """Rotate a bone's X/Y local rotation toward a world-space point (absolute, not additive)."""
+    pos = bone.position
+    dx = target[0] - pos["x"]
+    dy = target[1] - pos["y"]
+    dz = target[2] - pos["z"]
+    dist = math.hypot(dx, dz)
+    angle_y = math.degrees(math.atan2(dx, dz)) * scale
+    angle_x = math.degrees(math.atan2(dy, dist)) * scale
+    cur_euler = bone.local_euler
+    cur_z = cur_euler[2] if cur_euler else 0.0
+    bone.set_local_rotation(angle_x, angle_y, cur_z)
+    return bone.label
+
+
+def _look_at_cascade(skeleton: Any, target: tuple[float, float, float], mode: str) -> list[str]:
+    rotated: list[str] = []
+    for level_name in _LOOK_AT_MODE_LEVELS[mode]:
+        _, candidate_groups, scale = next(l for l in _LOOK_AT_LEVELS if l[0] == level_name)
+        for candidates in candidate_groups:
+            bone = _find_bone_any(skeleton, candidates)
+            if bone is not None:
+                rotated.append(_rotate_bone_toward(bone, target, scale))
+    return rotated
 
 # ---------------------------------------------------------------------------
 # Bone-group filter map (mirrors server.py _POSE_BONE_GROUPS)
@@ -39,6 +118,25 @@ _POSE_BONE_GROUPS: dict[str, set[str]] = {
         "spine1", "spine2", "spine3", "spine4",
         "neck1", "neck2",
     },
+}
+
+
+# ---------------------------------------------------------------------------
+# Interactive-pose recipe mapping
+# ---------------------------------------------------------------------------
+
+_INTERACTION_DEFAULT_DISTANCE: dict[str, float] = {
+    "face-each-other": 100.0,
+    "hug": 40.0,
+    "shoulder-arm": 30.0,
+    "handshake": 60.0,
+}
+
+_INTERACTION_RECIPE_BUILDERS: dict[str, Any] = {
+    "face-each-other": lambda a, b: build_face_each_other_recipe(a, b),
+    "hug": lambda a, b: build_hug_recipe(a, b),
+    "shoulder-arm": lambda a, b: build_touch_recipe(a, b),
+    "handshake": lambda a, b: build_handshake_recipe(a, b),
 }
 
 
@@ -85,13 +183,25 @@ async def daz_look_at_point(
         # Full body turn to look behind
         daz_look_at_point("Genesis 9", 0, 140, -150, mode="full")
     """
-    return await _execute_by_id("vangard-look-at-point", {
-        "characterLabel": character_label,
-        "targetX": target_x,
-        "targetY": target_y,
-        "targetZ": target_z,
-        "mode": mode,
-    })
+    if mode not in _LOOK_AT_MODE_LEVELS:
+        raise ToolError(
+            f"Unknown mode {mode!r}. Valid modes: {', '.join(_LOOK_AT_MODE_LEVELS)}"
+        )
+
+    def _run() -> dict[str, Any]:
+        skeleton = _find_skeleton(get_scene(), character_label)
+        rotated = _look_at_cascade(skeleton, (target_x, target_y, target_z), mode)
+        return {
+            "success": True,
+            "character": character_label,
+            "mode": mode,
+            "rotatedBones": rotated,
+        }
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
@@ -130,11 +240,39 @@ async def daz_look_at_character(
         # Bob turns his whole body to face Alice
         daz_look_at_character("Bob", "Alice", mode="full")
     """
-    return await _execute_by_id("vangard-look-at-character", {
-        "sourceLabel": source_label,
-        "targetLabel": target_label,
-        "mode": mode,
-    })
+    if mode not in _LOOK_AT_MODE_LEVELS:
+        raise ToolError(
+            f"Unknown mode {mode!r}. Valid modes: {', '.join(_LOOK_AT_MODE_LEVELS)}"
+        )
+
+    def _run() -> dict[str, Any]:
+        scene = get_scene()
+        source = _find_skeleton(scene, source_label)
+        target = _find_skeleton(scene, target_label)
+
+        target_head = _find_bone_any(target, ("head",))
+        if target_head is not None:
+            head_pos = target_head.position
+            target_point = (head_pos["x"], head_pos["y"], head_pos["z"])
+        else:
+            # Fallback: figure root position + approximate head height for Genesis 9
+            root_pos = target.position
+            target_point = (root_pos["x"], root_pos["y"] + 163, root_pos["z"])
+
+        rotated = _look_at_cascade(source, target_point, mode)
+        return {
+            "success": True,
+            "source": source_label,
+            "target": target_label,
+            "mode": mode,
+            "targetPosition": {"x": target_point[0], "y": target_point[1], "z": target_point[2]},
+            "rotatedBones": rotated,
+        }
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
@@ -173,16 +311,41 @@ async def daz_reach_toward(
         daz_reach_toward("Genesis 9", "left", -60, 100, 50)
 
     Note:
-        This uses simplified IK approximation. For precise hand positioning
-        or complex reaching, load an artist-created pose preset instead.
+        Uses dazpy's damped-least-squares IK solver (align_hand_target) over
+        the shoulder-forearm-hand chain, rather than a fixed trig heuristic.
     """
-    return await _execute_by_id("vangard-reach-toward", {
-        "characterLabel": character_label,
-        "side": side,
-        "targetX": target_x,
-        "targetY": target_y,
-        "targetZ": target_z,
-    })
+    if side not in ("left", "right"):
+        raise ToolError(f"side must be 'left' or 'right', got {side!r}")
+
+    prefix = "l" if side == "left" else "r"
+    shoulder_candidates = (f"{prefix}_upperarm", f"{prefix}ShldrBend", f"{prefix}Shldr")
+    anchor = f"{prefix}_hand"
+
+    def _run() -> dict[str, Any]:
+        skeleton = _find_skeleton(get_scene(), character_label)
+
+        target_distance = None
+        shoulder = _find_bone_any(skeleton, shoulder_candidates)
+        if shoulder is not None:
+            pos = shoulder.position
+            target_distance = math.dist(
+                (pos["x"], pos["y"], pos["z"]), (target_x, target_y, target_z)
+            )
+
+        result = align_hand_target(skeleton, (target_x, target_y, target_z), source_anchor=anchor)
+
+        return {
+            "success": True,
+            "character": character_label,
+            "side": side,
+            "targetDistance": target_distance,
+            "bones": result.chain,
+        }
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
@@ -228,16 +391,53 @@ async def daz_interactive_pose(
     Note:
         These are simplified interaction poses. For natural-looking results,
         you may need to fine-tune positions and rotations using daz_set_property
-        or load artist-created pose presets.
+        or load artist-created pose presets. Arm/hand posing is generation-agnostic
+        (dazpy's anchor system resolves the right bone names per figure family).
     """
-    args: dict[str, Any] = {
-        "char1Label": char1_label,
-        "char2Label": char2_label,
-        "interactionType": interaction_type,
-    }
-    if distance is not None:
-        args["distance"] = distance
-    return await _execute_by_id("vangard-interactive-pose", args)
+    if interaction_type not in _INTERACTION_RECIPE_BUILDERS:
+        raise ToolError(
+            f"Unknown interaction_type {interaction_type!r}. "
+            f"Valid values: {', '.join(_INTERACTION_RECIPE_BUILDERS)}"
+        )
+
+    spacing = distance if distance is not None else _INTERACTION_DEFAULT_DISTANCE[interaction_type]
+
+    def _run() -> dict[str, Any]:
+        scene = get_scene()
+        char1 = _find_skeleton(scene, char1_label)
+        char2 = _find_skeleton(scene, char2_label)
+
+        pos1 = char1.position
+        pos2 = char2.position
+        mid_x = (pos1["x"] + pos2["x"]) / 2
+        mid_z = (pos1["z"] + pos2["z"]) / 2
+        char1.set_position(mid_x - spacing / 2, pos1["y"], mid_z)
+        char2.set_position(mid_x + spacing / 2, pos2["y"], mid_z)
+
+        hip1 = char1.find_bone("hip")
+        hip2 = char2.find_bone("hip")
+        hip1_euler = hip1.local_euler
+        hip2_euler = hip2.local_euler
+        hip1.set_local_rotation(hip1_euler[0] if hip1_euler else 0.0, 90.0, hip1_euler[2] if hip1_euler else 0.0)
+        hip2.set_local_rotation(hip2_euler[0] if hip2_euler else 0.0, -90.0, hip2_euler[2] if hip2_euler else 0.0)
+
+        applied = ["facing"]
+        recipe = _INTERACTION_RECIPE_BUILDERS[interaction_type](char1_label, char2_label)
+        scene.apply_interaction_recipe(recipe, align_limb_targets=True)
+        applied.append(interaction_type)
+
+        return {
+            "success": True,
+            "char1": char1_label,
+            "char2": char2_label,
+            "interactionType": interaction_type,
+            "applied": applied,
+        }
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -273,10 +473,27 @@ async def daz_reset_pose(
         - Keyframes on bone properties are not removed; use daz_clear_animation
           if you also need to strip animation data.
     """
-    return await _execute_by_id(
-        "vangard-reset-pose",
-        {"nodeLabel": node_label, "zeroTransforms": zero_transforms},
-    )
+    def _run() -> dict[str, Any]:
+        skeleton = _find_skeleton(get_scene(), node_label)
+        rotations = skeleton.bone_rotations()
+        skeleton.set_bone_rotations({name: (0.0, 0.0, 0.0) for name in rotations})
+
+        if zero_transforms:
+            skeleton.set_local_position(0.0, 0.0, 0.0)
+            scale_prop = skeleton.find_property("Scale")
+            if scale_prop is not None:
+                scale_prop.value = 1.0
+
+        return {
+            "node": node_label,
+            "bones_reset": len(rotations),
+            "transforms_zeroed": zero_transforms,
+        }
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()

@@ -685,7 +685,7 @@ class TestResetPose:
         )
 
     async def test_not_found_raises(self, live_client):
-        with pytest.raises(ToolError, match="Node not found"):
+        with pytest.raises(ToolError, match="not found"):
             await daz_reset_pose("__nonexistent__")
 
     async def test_idempotent(self, live_client, figure_label):
