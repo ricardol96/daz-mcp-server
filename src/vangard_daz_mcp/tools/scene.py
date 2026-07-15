@@ -10,6 +10,8 @@ from typing import Any
 
 from fastmcp.exceptions import ToolError
 
+from dazpy import DazSceneState
+
 from .._mcp import mcp, _execute_by_id
 from .._client import get_scene, run_dazpy
 from .._errors import handle_dazpy_error
@@ -41,7 +43,23 @@ async def daz_scene_info() -> dict[str, Any]:
       - lights: list of {name, label, type} for all lights
       - totalNodes: total node count in the scene
     """
-    return await _execute_by_id("vangard-scene-info")
+    def _run() -> dict[str, Any]:
+        overview = get_scene().overview()
+        return {
+            "sceneFile": overview["scene_file"],
+            "selectedNode": overview["selected_node"],
+            "figures": overview["figures"],
+            "cameras": overview["cameras"],
+            "lights": overview["lights"],
+            "totalNodes": overview["total_nodes"],
+        }
+
+    try:
+        return await run_dazpy(_run)
+    except ToolError:
+        raise
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
@@ -195,12 +213,22 @@ async def daz_get_node_hierarchy(
         # Get prop hierarchy
         result = daz_get_node_hierarchy("Sword", max_depth=5)
     """
-    args: dict[str, Any] = {}
-    if node_label is not None:
-        args["nodeLabel"] = node_label
-    if max_depth is not None:
-        args["maxDepth"] = max_depth
-    return await _execute_by_id("vangard-get-node-hierarchy", args or None)
+    effective_depth = max_depth if max_depth is not None else 10
+
+    def _run() -> dict[str, Any]:
+        result = get_scene().node_hierarchy(node_label, max_depth=effective_depth)
+        return {
+            "node": result["node"],
+            "hierarchy": result["hierarchy"],
+            "totalDescendants": result["total_descendants"],
+        }
+
+    try:
+        return await run_dazpy(_run)
+    except ToolError:
+        raise
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
@@ -351,9 +379,10 @@ async def daz_get_selected_nodes() -> dict[str, Any]:
 async def daz_save_scene_state(checkpoint_name: str) -> dict[str, Any]:
     """Save current scene state as a named in-memory checkpoint.
 
-    Captures transforms (position, rotation, scale), active morphs, and light
-    properties for all skeletons, cameras, and lights in the scene. Use this
-    before experimental changes so you can restore with daz_restore_scene_state.
+    Captures every skeleton's complete pose (bone rotations, morphs, and
+    node-level properties such as Scale) plus transforms and key properties
+    for every camera and light in the scene. Use this before experimental
+    changes so you can restore with daz_restore_scene_state.
 
     Args:
         checkpoint_name: Unique name for this checkpoint (e.g. "before_lighting_test").
@@ -363,23 +392,34 @@ async def daz_save_scene_state(checkpoint_name: str) -> dict[str, Any]:
         Dict with checkpoint_name, node_count, and saved_at (ISO timestamp).
 
     Notes:
-        Checkpoints are stored in the MCP server process memory and are lost if
-        the server is restarted. They do not save materials, geometry, or HDR domes.
+        - Checkpoints are stored in the MCP server process memory and are lost if
+          the server is restarted. They do not save materials, geometry, or HDR domes.
+        - Captures and restores each property's raw (pre-formula) value, so
+          repeated save/restore cycles are idempotent even for properties
+          driven by other linked dials (e.g. a custom character's Scale
+          control fed by several morphs) — see dazpy's DazSceneState.
     """
-    result = await _execute_by_id("vangard-save-scene-state", {
-        "checkpointName": checkpoint_name,
-    })
+    def _run() -> "DazSceneState":
+        return DazSceneState.capture(get_scene())
+
+    try:
+        state = await run_dazpy(_run)
+    except ToolError:
+        raise
+    except Exception as e:
+        handle_dazpy_error(e)
 
     now = _dt.datetime.utcnow().isoformat() + "Z"
+    node_count = len(state.skeleton_poses) + len(state.camera_transforms) + len(state.light_transforms)
     _CHECKPOINTS[checkpoint_name] = {
-        "nodes": result.get("nodes", []),
+        "state": state.to_dict(),
         "saved_at": now,
-        "node_count": result.get("node_count", 0),
+        "node_count": node_count,
     }
 
     return {
         "checkpoint_name": checkpoint_name,
-        "node_count": result.get("node_count", 0),
+        "node_count": node_count,
         "saved_at": now,
     }
 
@@ -388,15 +428,15 @@ async def daz_save_scene_state(checkpoint_name: str) -> dict[str, Any]:
 async def daz_restore_scene_state(checkpoint_name: str) -> dict[str, Any]:
     """Restore scene state from a previously saved checkpoint.
 
-    Applies the transforms, morphs, and light properties captured by
-    daz_save_scene_state back to the scene. Nodes that no longer exist
-    are skipped and reported in the errors list.
+    Applies the bone rotations, morphs, node properties, and camera/light
+    transforms captured by daz_save_scene_state back to the scene. Nodes
+    that no longer exist are skipped and reported in the errors list.
 
     Args:
         checkpoint_name: Name of the checkpoint to restore.
 
     Returns:
-        Dict with checkpoint_name, restored (list of node labels), and errors.
+        Dict with checkpoint_name, restored (list of node names), and errors.
 
     Raises:
         ToolError: If no checkpoint with the given name exists.
@@ -411,10 +451,23 @@ async def daz_restore_scene_state(checkpoint_name: str) -> dict[str, Any]:
         )
 
     cp = _CHECKPOINTS[checkpoint_name]
-    return await _execute_by_id("vangard-restore-scene-state", {
-        "checkpointName": checkpoint_name,
-        "nodes": cp["nodes"],
-    })
+
+    def _run() -> dict[str, Any]:
+        state = DazSceneState.from_dict(cp["state"])
+        return state.apply(get_scene())
+
+    try:
+        result = await run_dazpy(_run)
+    except ToolError:
+        raise
+    except Exception as e:
+        handle_dazpy_error(e)
+
+    return {
+        "checkpoint_name": checkpoint_name,
+        "restored": result.get("restored", []),
+        "errors": result.get("errors", []),
+    }
 
 
 @mcp.tool()

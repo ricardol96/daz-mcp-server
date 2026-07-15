@@ -41,7 +41,9 @@ from vangard_daz_mcp.tools.morph import daz_search_morphs, daz_set_morph
 from vangard_daz_mcp.tools.render import daz_set_render_output
 from vangard_daz_mcp.tools.scene import (
     daz_get_selected_nodes,
+    daz_restore_scene_state,
     daz_save_scene,
+    daz_save_scene_state,
     daz_scene_info,
 )
 from vangard_daz_mcp.tools.transform import daz_delete_node, daz_set_property
@@ -642,22 +644,20 @@ class TestSetRenderOutput:
 
 class TestResetPose:
     """Every test here mutates figure_label's actual bone rotations and root
-    transform (whatever character is really loaded). daz_reset_pose has no
-    counterpart that restores an arbitrary pre-existing custom pose — there's
-    no bulk bone-transform snapshot tool — so the best available cleanup is to
-    return the figure to a known clean baseline (zeroed pose/transform) via
-    the tool under test itself. This is NOT equivalent to restoring whatever
-    custom pose the figure had before the suite ran; only run this file
-    against a disposable/scratch scene, not one with a pose you care about.
+    transform (whatever character is really loaded). Cleanup uses a
+    daz_save_scene_state/daz_restore_scene_state checkpoint, which captures
+    every figure's complete pose (bone rotations, morphs, and node
+    properties — via dazpy's DazSceneState/DazPose) rather than the tool
+    under test's own zeroed baseline, so it correctly restores whatever
+    custom pose the figure(s) had before the suite ran.
     """
 
     @pytest_asyncio.fixture(autouse=True)
     async def clean_pose(self, live_client, figure_label):
+        checkpoint = "_test_phase5_reset_pose_checkpoint"
+        await daz_save_scene_state(checkpoint)
         yield
-        try:
-            await daz_reset_pose(figure_label, zero_transforms=True)
-        except ToolError:
-            pass
+        await daz_restore_scene_state(checkpoint)
 
     async def test_resets_bone_rotations(self, live_client, figure_label):
         """Apply a rotation to the figure root, reset, verify it's zeroed."""

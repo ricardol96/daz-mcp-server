@@ -31,4 +31,8 @@ Technical documentation for server internals and the MCP bridge.
 
 ## Macros & Checkpoints
 - `daz_start_recording` / `daz_stop_recording`: Session-based macro storage.
-- `daz_save_scene_state`: Checkpoint transforms/morphs/lights in server memory.
+- `daz_save_scene_state` / `daz_restore_scene_state`: In-memory checkpoint of every skeleton's
+  complete pose (bone rotations, morphs, node properties — via dazpy's `DazSceneState`/`DazPose`)
+  plus camera/light transforms. Uses each property's raw (pre-formula) value throughout, so
+  repeated save/restore cycles are idempotent even for properties driven by other linked dials
+  (e.g. a custom character's Scale control fed by several morphs).

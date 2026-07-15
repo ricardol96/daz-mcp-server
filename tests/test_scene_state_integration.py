@@ -14,10 +14,13 @@ Tools covered
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
+from vangard_daz_mcp._client import get_daz_client, run_dazpy
 from vangard_daz_mcp.tools.scene import (
     daz_list_checkpoints,
     daz_restore_scene_state,
@@ -90,6 +93,48 @@ class TestSceneCheckpoints:
     async def test_restore_missing_checkpoint_raises(self, live_client):
         with pytest.raises((ToolError, KeyError, Exception)):
             await daz_restore_scene_state("checkpoint_that_does_not_exist_xyz_999")
+
+    async def test_repeated_save_restore_does_not_inflate_erc_driven_property(
+        self, live_client, figure_label
+    ):
+        """Regression test for a checkpoint-fidelity bug.
+
+        A property driven by DzERCLink controllers (e.g. a "Scale" dial fed
+        by other morphs) returns a computed total from getValue() that
+        already includes every controller's contribution. The old
+        implementation captured that computed total and wrote it straight
+        back via setValue() on restore, which re-applies the same ERC
+        contributions on top -- inflating the property a little more on
+        every save/restore cycle even though nothing in the scene actually
+        changed. This asserts the fix (getRawValue()/setRawValue()) makes
+        repeated cycles idempotent.
+        """
+        def _read_scale_raw() -> float | None:
+            label_json = json.dumps(figure_label)
+            script = f"""(function(){{
+                var _skels = Scene.getSkeletonList();
+                var _s = null;
+                for (var _i = 0; _i < _skels.length; _i++) {{
+                    if (_skels[_i].getLabel() === {label_json}) {{ _s = _skels[_i]; break; }}
+                }}
+                if (!_s) return null;
+                return _s.getScaleControl().getRawValue();
+            }})();"""
+            return get_daz_client().execute(script).value
+
+        baseline = await run_dazpy(_read_scale_raw)
+        if baseline is None:
+            pytest.skip(f"Could not resolve scale control for {figure_label!r}")
+
+        for _ in range(3):
+            await daz_save_scene_state(self.CHECKPOINT)
+            await daz_restore_scene_state(self.CHECKPOINT)
+
+        after = await run_dazpy(_read_scale_raw)
+        assert after == pytest.approx(baseline, abs=1e-6), (
+            f"Scale raw value drifted from {baseline} to {after} across "
+            "repeated save/restore cycles -- checkpoint restore is not idempotent"
+        )
 
 
 # ---------------------------------------------------------------------------

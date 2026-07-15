@@ -22,28 +22,29 @@ from vangard_daz_mcp.tools.figure import (
     daz_look_at_character,
     daz_look_at_point,
     daz_reach_toward,
-    daz_reset_pose,
 )
 from vangard_daz_mcp.tools.morph import (
     daz_list_morphs,
     daz_search_morphs,
     daz_set_emotion,
 )
-from vangard_daz_mcp.tools.scene import daz_restore_scene_state, daz_save_scene_state, daz_scene_info
+from vangard_daz_mcp.tools.scene import daz_restore_scene_state, daz_save_scene_state
 from vangard_daz_mcp.tools.transform import daz_set_property
 
 
 # ---------------------------------------------------------------------------
 # Cleanup fixtures
 #
-# daz_set_emotion mutates morphs on the root skeleton object, which the
-# scene-state checkpoint fully captures/restores. daz_look_at_point,
-# daz_look_at_character, daz_reach_toward, and daz_interactive_pose all
-# rotate individual skeleton bones instead — there is no bulk bone-transform
-# snapshot tool, so the best available cleanup is resetting to a known clean
-# baseline via daz_reset_pose. That is NOT equivalent to restoring whatever
-# custom pose the figure had before the suite ran; only run this file
-# against a disposable/scratch scene, not one with a pose you care about.
+# daz_save_scene_state/daz_restore_scene_state now capture every skeleton's
+# complete pose (bone rotations, morphs, and node properties -- via dazpy's
+# DazSceneState/DazPose, not just the root transform), so a save/restore
+# checkpoint restores whatever pose the figure(s) actually had before the
+# test ran -- not a hardcoded zero baseline. This covers daz_set_emotion's
+# morph changes as well as the bone rotations from daz_look_at_point,
+# daz_look_at_character, daz_reach_toward, and daz_interactive_pose, and
+# extends to every figure in the scene (not just the one named by
+# figure_label), so it's safe to run against a scene with a pose you care
+# about, not just a disposable/scratch one.
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture()
@@ -56,33 +57,24 @@ async def clean_emotion(live_client, figure_label):
 
 @pytest_asyncio.fixture()
 async def clean_pose(live_client, figure_label):
+    checkpoint = "_test_actors_pose_checkpoint"
+    await daz_save_scene_state(checkpoint)
     yield
-    try:
-        await daz_reset_pose(figure_label, zero_transforms=True)
-    except ToolError:
-        pass
+    await daz_restore_scene_state(checkpoint)
 
 
 @pytest_asyncio.fixture()
 async def clean_pose_both(live_client, figure_label):
-    """Reset every figure actually present, not just the two named fixtures.
+    """Same as clean_pose -- kept as a distinct name for tests that pose two figures.
 
-    Deliberately does not depend on the second_figure_label fixture — that
-    fixture skips the test outright when fewer than 2 figures are loaded,
-    which would wrongly block single-figure tests (e.g. not-found error
-    cases) that never touch a second figure.
+    The underlying checkpoint already covers every figure in the scene, so
+    there's no need to enumerate figures separately as the old
+    daz_reset_pose-based version did.
     """
+    checkpoint = "_test_actors_pose_both_checkpoint"
+    await daz_save_scene_state(checkpoint)
     yield
-    try:
-        scene = await daz_scene_info()
-        labels = {f["label"] for f in scene.get("figures", [])}
-    except Exception:
-        labels = {figure_label}
-    for label in labels:
-        try:
-            await daz_reset_pose(label, zero_transforms=True)
-        except ToolError:
-            pass
+    await daz_restore_scene_state(checkpoint)
 
 
 # ---------------------------------------------------------------------------

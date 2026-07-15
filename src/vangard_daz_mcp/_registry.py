@@ -38,40 +38,6 @@ async def _register_scripts(client: httpx.AsyncClient) -> None:
 
 # Returns: {sceneFile, selectedNode, figures:[{name,label,type}], cameras:[...], lights:[...], totalNodes}
 # Uses skeleton list (characters + clothing) rather than all nodes (potentially thousands).
-_SCENE_INFO_SCRIPT = """\
-(function(){
-    var args = getArguments()[0] || {};
-    var figures = [];
-    for (var i = 0; i < Scene.getNumSkeletons(); i++) {
-        var s = Scene.getSkeleton(i);
-        // Skip follower figures (eyelashes, tear surfaces, etc.) — their node
-        // parent is another figure, not the scene root.
-        var parent = s.getNodeParent();
-        if (parent && parent.inherits("DzFigure")) continue;
-        figures.push({ name: s.getName(), label: s.getLabel(), type: s.className() });
-    }
-    var cameras = [];
-    for (var i = 0; i < Scene.getNumCameras(); i++) {
-        var c = Scene.getCamera(i);
-        cameras.push({ name: c.getName(), label: c.getLabel() });
-    }
-    var lights = [];
-    for (var i = 0; i < Scene.getNumLights(); i++) {
-        var l = Scene.getLight(i);
-        lights.push({ name: l.getName(), label: l.getLabel(), type: l.className() });
-    }
-    var sel = Scene.getPrimarySelection();
-    return {
-        sceneFile: Scene.getFilename(),
-        selectedNode: sel ? sel.getLabel() : null,
-        figures: figures,
-        cameras: cameras,
-        lights: lights,
-        totalNodes: Scene.getNumNodes()
-    };
-})()
-"""
-
 # args: {nodeLabel}
 # Returns: {name, label, type, properties:{label:value}}
 # Searches by label first, then internal name.
@@ -205,53 +171,6 @@ _SEARCH_MORPHS_SCRIPT = """\
 # maxDepth: maximum recursion depth (default 10, 0 = unlimited)
 # Returns: {node, children: [{node, children}], totalDescendants}
 # Gets complete hierarchy tree for a node
-_GET_NODE_HIERARCHY_SCRIPT = """\
-(function(){
-    var args = getArguments()[0] || {};
-    var node = Scene.findNodeByLabel(args.nodeLabel);
-    if (!node) node = Scene.findNode(args.nodeLabel);
-    if (!node) throw new Error("Node not found: " + args.nodeLabel);
-
-    var maxDepth = args.maxDepth !== undefined ? args.maxDepth : 10;
-    var totalDescendants = 0;
-
-    function buildHierarchy(n, depth) {
-        if (maxDepth > 0 && depth >= maxDepth) {
-            return null;
-        }
-
-        var nodeInfo = {
-            label: n.getLabel(),
-            name: n.getName(),
-            type: n.className()
-        };
-
-        var children = [];
-        for (var i = 0; i < n.getNumNodeChildren(); i++) {
-            totalDescendants++;
-            var childHierarchy = buildHierarchy(n.getNodeChild(i), depth + 1);
-            if (childHierarchy) {
-                children.push(childHierarchy);
-            }
-        }
-
-        if (children.length > 0) {
-            nodeInfo.children = children;
-        }
-
-        return nodeInfo;
-    }
-
-    var hierarchy = buildHierarchy(node, 0);
-
-    return {
-        node: node.getLabel(),
-        hierarchy: hierarchy,
-        totalDescendants: totalDescendants
-    };
-})()
-"""
-
 # args: {nodeLabel}
 # Returns: {node, children: [{label, name, type}], count}
 # Lists direct children of a node
@@ -1835,103 +1754,6 @@ _APPLY_CAMERA_ANGLE_SCRIPT = """\
         camera_position: {x: Math.round(camX*10)/10, y: Math.round(camY*10)/10, z: Math.round(camZ*10)/10},
         note: note
     };
-})()
-"""
-
-_SAVE_SCENE_STATE_SCRIPT = """\
-(function(){
-    var args = getArguments()[0] || {};
-    var nodes = [];
-    var transformKeys = ["XTranslate", "YTranslate", "ZTranslate", "XRotate", "YRotate", "ZRotate", "Scale"];
-    var transformSet = {XTranslate:1, YTranslate:1, ZTranslate:1,
-                        XRotate:1, YRotate:1, ZRotate:1,
-                        Scale:1, XScale:1, YScale:1, ZScale:1};
-
-    function captureTransforms(node) {
-        var t = {};
-        for (var i = 0; i < transformKeys.length; i++) {
-            var p = node.findProperty(transformKeys[i]);
-            if (p) t[transformKeys[i]] = p.getValue();
-        }
-        return t;
-    }
-
-    // Skeletons / figures
-    for (var i = 0; i < Scene.getNumSkeletons(); i++) {
-        var skel = Scene.getSkeleton(i);
-        var morphs = [];
-        for (var p = 0; p < skel.getNumProperties(); p++) {
-            var mp = skel.getProperty(p);
-            if (mp.inherits("DzFloatProperty") && !transformSet[mp.getName()]) {
-                var v = mp.getValue();
-                if (v !== 0) morphs.push({name: mp.getName(), value: v});
-            }
-        }
-        nodes.push({label: skel.getLabel(), type: "skeleton",
-                    transforms: captureTransforms(skel), active_morphs: morphs, extra: {}});
-    }
-
-    // Cameras
-    for (var ci = 0; ci < Scene.getNumCameras(); ci++) {
-        var cam = Scene.getCamera(ci);
-        nodes.push({label: cam.getLabel(), type: "camera",
-                    transforms: captureTransforms(cam), active_morphs: [], extra: {}});
-    }
-
-    // Lights
-    for (var li = 0; li < Scene.getNumLights(); li++) {
-        var light = Scene.getLight(li);
-        var extra = {};
-        var lightProps = ["Flux", "Shadow Softness", "Spread Angle"];
-        for (var lk = 0; lk < lightProps.length; lk++) {
-            var lp = light.findProperty(lightProps[lk]);
-            if (lp) extra[lightProps[lk]] = lp.getValue();
-        }
-        nodes.push({label: light.getLabel(), type: "light",
-                    transforms: captureTransforms(light), active_morphs: [], extra: extra});
-    }
-
-    return {checkpoint: args.checkpointName, nodes: nodes, node_count: nodes.length};
-})()
-"""
-
-_RESTORE_SCENE_STATE_SCRIPT = """\
-(function(){
-    var args = getArguments()[0] || {};
-    var nodes = args.nodes || [];
-    var restored = [];
-    var errors = [];
-
-    for (var i = 0; i < nodes.length; i++) {
-        var nd = nodes[i];
-        var node = Scene.findNodeByLabel(nd.label);
-        if (!node) { errors.push("Node not found: " + nd.label); continue; }
-
-        // Restore transforms
-        var transforms = nd.transforms || {};
-        for (var key in transforms) {
-            var prop = node.findProperty(key);
-            if (prop) prop.setValue(transforms[key]);
-        }
-
-        // Restore active morphs
-        var morphs = nd.active_morphs || [];
-        for (var m = 0; m < morphs.length; m++) {
-            var mp = node.findProperty(morphs[m].name);
-            if (mp) mp.setValue(morphs[m].value);
-        }
-
-        // Restore extra properties (lights)
-        var extra = nd.extra || {};
-        for (var ek in extra) {
-            var ep = node.findProperty(ek);
-            if (ep) ep.setValue(extra[ek]);
-        }
-
-        restored.push(nd.label);
-    }
-
-    return {checkpoint: args.checkpointName, restored: restored, errors: errors};
 })()
 """
 
@@ -6367,10 +6189,6 @@ _EXPORT_SCENE_SCRIPT = """\
 # Registry entries: script_id → (description, script_text)
 # Registered with DazScriptServer on startup so high-level tools call by ID.
 _REGISTRY: dict[str, tuple[str, str]] = {
-    "vangard-scene-info": (
-        "Return a snapshot of the current DAZ Studio scene",
-        _SCENE_INFO_SCRIPT,
-    ),
     "vangard-render": (
         "Trigger a render using current DAZ Studio render settings",
         _RENDER_SCRIPT,
@@ -6386,10 +6204,6 @@ _REGISTRY: dict[str, tuple[str, str]] = {
     "vangard-search-morphs": (
         "Search morphs by name pattern (case-insensitive substring match)",
         _SEARCH_MORPHS_SCRIPT,
-    ),
-    "vangard-get-node-hierarchy": (
-        "Get complete hierarchy tree for a node with recursive children",
-        _GET_NODE_HIERARCHY_SCRIPT,
     ),
     "vangard-list-children": (
         "List direct children of a node",
@@ -6536,15 +6350,6 @@ _REGISTRY: dict[str, tuple[str, str]] = {
     "vangard-apply-camera-angle": (
         "Apply a standard camera angle preset relative to a subject",
         _APPLY_CAMERA_ANGLE_SCRIPT,
-    ),
-    # Phase 2: Checkpoint system
-    "vangard-save-scene-state": (
-        "Serialize all node transforms, morphs, and light properties for checkpoint storage",
-        _SAVE_SCENE_STATE_SCRIPT,
-    ),
-    "vangard-restore-scene-state": (
-        "Restore node transforms, morphs, and light properties from a checkpoint snapshot",
-        _RESTORE_SCENE_STATE_SCRIPT,
     ),
     # Phase 2: Scene layout & proximity
     "vangard-get-scene-layout": (

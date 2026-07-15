@@ -201,54 +201,59 @@ async def test_daz_execute_file_failure(mock_client):
 
 
 # ---------------------------------------------------------------------------
-# daz_scene_info
+# daz_scene_info — routes through get_scene().overview() (dazpy), not httpx
 # ---------------------------------------------------------------------------
 
-_SCENE_RESULT = {
-    "sceneFile": "C:/scenes/test.duf",
-    "nodeCount": 2,
-    "selectedNode": "Genesis 9",
-    "nodes": [
-        {"name": "Genesis9", "label": "Genesis 9", "type": "DzFigure"},
-        {"name": "Camera", "label": "Camera", "type": "DzCamera"},
-    ],
+_OVERVIEW_RESULT = {
+    "scene_file": "C:/scenes/test.duf",
+    "selected_node": "Genesis 9",
+    "figures": [{"name": "Genesis9", "label": "Genesis 9", "type": "DzFigure"}],
+    "cameras": [{"name": "Camera", "label": "Camera"}],
+    "lights": [],
+    "total_nodes": 2,
 }
 
 
-async def test_daz_scene_info_ok(mock_daz):
-    mock_daz.post("/scripts/vangard-scene-info/execute").mock(return_value=_ok(_SCENE_RESULT))
+async def test_daz_scene_info_ok(mock_scene):
+    mock_scene.overview.return_value = _OVERVIEW_RESULT
     result = await daz_scene_info()
-    assert result["nodeCount"] == 2
+    assert result["sceneFile"] == "C:/scenes/test.duf"
     assert result["selectedNode"] == "Genesis 9"
-    assert len(result["nodes"]) == 2
+    assert len(result["figures"]) == 1
+    assert result["totalNodes"] == 2
 
 
-async def test_daz_scene_info_unsaved(mock_daz):
-    payload = {**_SCENE_RESULT, "sceneFile": "", "selectedNode": None}
-    mock_daz.post("/scripts/vangard-scene-info/execute").mock(return_value=_ok(payload))
+async def test_daz_scene_info_unsaved(mock_scene):
+    mock_scene.overview.return_value = {**_OVERVIEW_RESULT, "scene_file": "", "selected_node": None}
     result = await daz_scene_info()
     assert result["sceneFile"] == ""
     assert result["selectedNode"] is None
 
 
 async def test_execute_by_id_retries_on_404(mock_daz):
-    """On 404, scripts are re-registered with DazScriptServer and the call retried."""
-    call_count = 0
+    """On 404, scripts are re-registered with DazScriptServer and the call retried.
 
-    def scene_info_side_effect(request):
+    Uses daz_load_file(merge=False), which still routes through
+    _execute_by_id("vangard-load-file", ...) -- daz_scene_info was migrated
+    to dazpy's DazScene.overview() and no longer exercises this retry path.
+    """
+    call_count = 0
+    load_result = {"success": True, "file": "C:/scenes/test.duf"}
+
+    def load_file_side_effect(request):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return httpx.Response(404, json={"success": False, "error": "Script not found: 'vangard-scene-info'"})
-        return _ok(_SCENE_RESULT)
+            return httpx.Response(404, json={"success": False, "error": "Script not found: 'vangard-load-file'"})
+        return _ok(load_result)
 
-    mock_daz.post("/scripts/vangard-scene-info/execute").mock(side_effect=scene_info_side_effect)
+    mock_daz.post("/scripts/vangard-load-file/execute").mock(side_effect=load_file_side_effect)
     mock_daz.post("/scripts/register").mock(
         return_value=httpx.Response(200, json={"success": True, "id": "x", "updated": False})
     )
 
-    result = await daz_scene_info()
-    assert result["nodeCount"] == 2
+    result = await daz_load_file("C:/scenes/test.duf", merge=False)
+    assert result["success"] is True
     assert call_count == 2
 
 
