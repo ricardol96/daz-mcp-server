@@ -2,13 +2,92 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from fastmcp.exceptions import ToolError
 
+from dazpy.exceptions import NodeNotFoundError
+
 from .._mcp import mcp, _execute_by_id, _execute, _execute_by_id_async  # noqa: F401
 from .._client import get_scene, get_daz_client, run_dazpy, get_http_client  # noqa: F401
 from .._errors import handle_dazpy_error, handle_network_error, check_response  # noqa: F401
+
+
+# ---------------------------------------------------------------------------
+# Skeleton/bone lookup helpers (mirrors tools/figure.py conventions)
+# ---------------------------------------------------------------------------
+
+
+def _find_skeleton(scene: Any, label: str) -> Any:
+    """Find a skeleton by label, falling back to internal name if no label matches."""
+    try:
+        return scene.find_skeleton_by_label(label)
+    except NodeNotFoundError:
+        return scene.find_skeleton(label)
+
+
+def _find_bone_any(skeleton: Any, candidates: tuple[str, ...]) -> Any | None:
+    """Return the first bone matching any candidate internal name, or None."""
+    for name in candidates:
+        try:
+            return skeleton.find_bone(name)
+        except NodeNotFoundError:
+            continue
+    return None
+
+
+def _gaze_angles(head_pos: dict, target_pos: dict) -> tuple[float, float]:
+    """Compute approximate (rotX, rotY) degrees for a head bone to face a world point."""
+    dx = target_pos["x"] - head_pos["x"]
+    dy = target_pos["y"] - head_pos["y"]
+    dz = target_pos["z"] - head_pos["z"]
+    horiz_dist = math.hypot(dx, dz)
+    rot_y = math.degrees(math.atan2(dx, dz))
+    rot_x = -math.degrees(math.atan2(dy, horiz_dist)) * 0.5
+    return rot_x, rot_y
+
+
+def _active_camera_position(client: Any) -> dict | None:
+    """Fetch the active viewport camera's world-space position, or None if none is active."""
+    script = """(function() {
+        var cam = Scene.getActiveCamera();
+        if (!cam) return null;
+        var p = cam.getWSPos();
+        return {x: p.x, y: p.y, z: p.z};
+    })();"""
+    return client.execute(script).value
+
+
+# ---------------------------------------------------------------------------
+# Body-language posture definitions (bone -> property -> value, pre-intensity)
+# ---------------------------------------------------------------------------
+
+_POSTURE_DEFINITIONS: dict[str, list[dict]] = {
+    "confident": [
+        {"bone": "chestUpper", "property": "XRotate", "value": 5.0},
+        {"bone": "lShldr", "property": "ZRotate", "value": -5.0},
+        {"bone": "rShldr", "property": "ZRotate", "value": 5.0},
+    ],
+    "defensive": [
+        {"bone": "chestUpper", "property": "XRotate", "value": -8.0},
+        {"bone": "abdomenLower", "property": "XRotate", "value": -3.0},
+        {"bone": "lShldr", "property": "ZRotate", "value": 10.0},
+        {"bone": "rShldr", "property": "ZRotate", "value": -10.0},
+    ],
+    "relaxed": [
+        {"bone": "chestUpper", "property": "XRotate", "value": -3.0},
+        {"bone": "lShldr", "property": "ZRotate", "value": 4.0},
+        {"bone": "rShldr", "property": "ZRotate", "value": -4.0},
+        {"bone": "neckLower", "property": "XRotate", "value": 2.0},
+    ],
+    "tense": [
+        {"bone": "chestUpper", "property": "XRotate", "value": 4.0},
+        {"bone": "lShldr", "property": "ZRotate", "value": -12.0},
+        {"bone": "rShldr", "property": "ZRotate", "value": 12.0},
+        {"bone": "neckLower", "property": "XRotate", "value": -3.0},
+    ],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -392,13 +471,51 @@ async def daz_set_emotion(
         raise ToolError(f"intensity must be between 0.0 and 1.0, got {intensity}")
 
     definition = _EMOTION_DEFINITIONS[emotion]
-    return await _execute_by_id("vangard-set-emotion", {
-        "nodeLabel": character_label,
-        "emotion": emotion,
-        "intensity": intensity,
-        "morphList": definition["morphs"],
-        "bodyAdjustments": definition["body"],
-    })
+
+    def _run() -> dict[str, Any]:
+        skeleton = _find_skeleton(get_scene(), character_label)
+
+        applied: list[dict] = []
+        not_found: list[str] = []
+        for entry in definition["morphs"]:
+            target_value = entry["value"] * intensity
+            found = False
+            for name in entry["names"]:
+                prop = skeleton.find_property(name)
+                if prop is not None:
+                    prop.value = target_value
+                    applied.append({"morph": name, "value": prop.value})
+                    found = True
+                    break
+            if not found:
+                not_found.append(entry["names"][0] if entry["names"] else "unknown")
+
+        body_applied: list[dict] = []
+        for adj in definition["body"]:
+            try:
+                bone = skeleton.find_bone(adj["bone"])
+            except NodeNotFoundError:
+                continue
+            prop = bone.find_property(adj["property"])
+            if prop is None:
+                continue
+            value = adj["value"] * intensity
+            prop.value = value
+            body_applied.append({"bone": adj["bone"], "property": adj["property"], "value": value})
+
+        return {
+            "character": character_label,
+            "emotion": emotion,
+            "intensity": intensity,
+            "applied_morphs": applied,
+            "body_adjustments": body_applied,
+            "not_found": not_found,
+        }
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
@@ -436,68 +553,38 @@ async def daz_set_body_language(
     if not (0.0 <= intensity <= 1.0):
         raise ToolError(f"intensity must be between 0.0 and 1.0, got {intensity}")
 
-    script = """
-(function() {
-    var skel = Scene.findSkeletonByLabel(args.figureLabel);
-    if (!skel) return {success: false, error: "Figure not found: " + args.figureLabel};
+    def _run() -> dict[str, Any]:
+        skeleton = _find_skeleton(get_scene(), figure_label)
 
-    var postures = {
-        confident: [
-            {bone: "chestUpper", prop: "XRotate", value: 5.0},
-            {bone: "lShldr",     prop: "ZRotate", value: -5.0},
-            {bone: "rShldr",     prop: "ZRotate", value: 5.0}
-        ],
-        defensive: [
-            {bone: "chestUpper",  prop: "XRotate", value: -8.0},
-            {bone: "abdomenLower", prop: "XRotate", value: -3.0},
-            {bone: "lShldr",      prop: "ZRotate", value: 10.0},
-            {bone: "rShldr",      prop: "ZRotate", value: -10.0}
-        ],
-        relaxed: [
-            {bone: "chestUpper", prop: "XRotate", value: -3.0},
-            {bone: "lShldr",     prop: "ZRotate", value: 4.0},
-            {bone: "rShldr",     prop: "ZRotate", value: -4.0},
-            {bone: "neckLower",  prop: "XRotate", value: 2.0}
-        ],
-        tense: [
-            {bone: "chestUpper", prop: "XRotate", value: 4.0},
-            {bone: "lShldr",     prop: "ZRotate", value: -12.0},
-            {bone: "rShldr",     prop: "ZRotate", value: 12.0},
-            {bone: "neckLower",  prop: "XRotate", value: -3.0}
-        ]
-    };
+        applied: list[dict] = []
+        not_found: list[str] = []
+        for adj in _POSTURE_DEFINITIONS[posture]:
+            try:
+                bone = skeleton.find_bone(adj["bone"])
+            except NodeNotFoundError:
+                not_found.append(adj["bone"])
+                continue
+            prop = bone.find_property(adj["property"])
+            if prop is None:
+                not_found.append(f"{adj['bone']}.{adj['property']}")
+                continue
+            value = adj["value"] * intensity
+            prop.value = value
+            applied.append({"bone": adj["bone"], "property": adj["property"], "value": value})
 
-    var intensity   = args.intensity;
-    var adjustments = postures[args.posture];
-    var applied     = [];
-    var notFound    = [];
+        return {
+            "success": True,
+            "figure": figure_label,
+            "posture": posture,
+            "intensity": intensity,
+            "applied": applied,
+            "not_found": not_found,
+        }
 
-    for (var i = 0; i < adjustments.length; i++) {
-        var adj  = adjustments[i];
-        var bone = skel.findBone(adj.bone);
-        if (!bone) { notFound.push(adj.bone); continue; }
-        var prop = bone.findProperty(adj.prop);
-        if (!prop) { notFound.push(adj.bone + "." + adj.prop); continue; }
-        prop.setValue(adj.value * intensity);
-        applied.push({bone: adj.bone, property: adj.prop, value: adj.value * intensity});
-    }
-
-    return {
-        success:   true,
-        figure:    args.figureLabel,
-        posture:   args.posture,
-        intensity: intensity,
-        applied:   applied,
-        not_found: notFound
-    };
-})();
-"""
-    result = await _execute(script, {
-        "figureLabel": figure_label,
-        "posture": posture,
-        "intensity": intensity,
-    })
-    return result
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
 
 
 @mcp.tool()
@@ -537,81 +624,70 @@ async def daz_direct_gaze(
     if direction == "character" and not target_label:
         raise ToolError("target_label is required when direction is 'character'")
 
-    script = """
-(function() {
-    var skel = Scene.findSkeletonByLabel(args.figureLabel);
-    if (!skel) return {success: false, error: "Figure not found: " + args.figureLabel};
+    def _run() -> dict[str, Any]:
+        scene = get_scene()
+        skeleton = _find_skeleton(scene, figure_label)
 
-    // Prefer "head" bone; fall back to "neckUpper"
-    var headBone = skel.findBone("head") || skel.findBone("neckUpper");
-    if (!headBone) return {success: false, error: "Head/neckUpper bone not found"};
+        head_bone = _find_bone_any(skeleton, ("head", "neckUpper"))
+        if head_bone is None:
+            return {"success": False, "error": "Head/neckUpper bone not found"}
 
-    var rotX = 0;
-    var rotY = 0;
-    var direction = args.direction;
+        rot_x = 0.0
+        rot_y = 0.0
 
-    if (direction === "up")    { rotX = -25; rotY = 0;   }
-    else if (direction === "down")  { rotX = 20;  rotY = 0;   }
-    else if (direction === "left")  { rotX = 0;   rotY = -35; }
-    else if (direction === "right") { rotX = 0;   rotY = 35;  }
-    else if (direction === "away")  { rotX = 0;   rotY = 180; }
-    else if (direction === "camera") {
-        var cam = Scene.getActiveCamera();
-        if (!cam) return {success: false, error: "No active camera in scene"};
-        var camPos  = cam.getWSPos();
-        var headPos = headBone.getWSPos();
-        var dx = camPos.x - headPos.x;
-        var dy = camPos.y - headPos.y;
-        var dz = camPos.z - headPos.z;
-        var horizDist = Math.sqrt(dx * dx + dz * dz);
-        rotY = Math.atan2(dx, dz) * (180 / Math.PI);
-        rotX = -Math.atan2(dy, horizDist) * (180 / Math.PI) * 0.5;
-    } else if (direction === "character") {
-        var tLabel  = args.targetLabel;
-        var target  = Scene.findNodeByLabel(tLabel);
-        if (!target) target = Scene.findSkeletonByLabel(tLabel);
-        if (!target) return {success: false, error: "Target not found: " + tLabel};
-        var tPos    = target.getWSPos();
-        var hPos    = headBone.getWSPos();
-        var dx2     = tPos.x - hPos.x;
-        var dy2     = tPos.y - hPos.y;
-        var dz2     = tPos.z - hPos.z;
-        var horizDist2 = Math.sqrt(dx2 * dx2 + dz2 * dz2);
-        rotY = Math.atan2(dx2, dz2) * (180 / Math.PI);
-        rotX = -Math.atan2(dy2, horizDist2) * (180 / Math.PI) * 0.5;
-    }
+        if direction == "up":
+            rot_x, rot_y = -25.0, 0.0
+        elif direction == "down":
+            rot_x, rot_y = 20.0, 0.0
+        elif direction == "left":
+            rot_x, rot_y = 0.0, -35.0
+        elif direction == "right":
+            rot_x, rot_y = 0.0, 35.0
+        elif direction == "away":
+            rot_x, rot_y = 0.0, 180.0
+        elif direction == "camera":
+            cam_pos = _active_camera_position(get_daz_client())
+            if cam_pos is None:
+                return {"success": False, "error": "No active camera in scene"}
+            rot_x, rot_y = _gaze_angles(head_bone.position, cam_pos)
+        elif direction == "character":
+            try:
+                target = scene.find_node_by_label(target_label)
+            except NodeNotFoundError:
+                try:
+                    target = scene.find_skeleton_by_label(target_label)
+                except NodeNotFoundError:
+                    return {"success": False, "error": f"Target not found: {target_label}"}
+            rot_x, rot_y = _gaze_angles(head_bone.position, target.position)
 
-    var applied  = [];
-    var notFound = [];
+        applied: list[dict] = []
+        not_found: list[str] = []
+        bone_name = head_bone.name
 
-    var xProp = headBone.findProperty("XRotate");
-    var yProp = headBone.findProperty("YRotate");
+        x_prop = head_bone.find_property("XRotate")
+        y_prop = head_bone.find_property("YRotate")
 
-    if (xProp) {
-        xProp.setValue(rotX);
-        applied.push({bone: headBone.getName(), property: "XRotate", value: rotX});
-    } else {
-        notFound.push(headBone.getName() + ".XRotate");
-    }
-    if (yProp) {
-        yProp.setValue(rotY);
-        applied.push({bone: headBone.getName(), property: "YRotate", value: rotY});
-    } else {
-        notFound.push(headBone.getName() + ".YRotate");
-    }
+        if x_prop is not None:
+            x_prop.value = rot_x
+            applied.append({"bone": bone_name, "property": "XRotate", "value": rot_x})
+        else:
+            not_found.append(f"{bone_name}.XRotate")
 
-    return {
-        success:   true,
-        figure:    args.figureLabel,
-        direction: direction,
-        applied:   applied,
-        not_found: notFound
-    };
-})();
-"""
-    result = await _execute(script, {
-        "figureLabel": figure_label,
-        "direction": direction,
-        "targetLabel": target_label or "",
-    })
-    return result
+        if y_prop is not None:
+            y_prop.value = rot_y
+            applied.append({"bone": bone_name, "property": "YRotate", "value": rot_y})
+        else:
+            not_found.append(f"{bone_name}.YRotate")
+
+        return {
+            "success": True,
+            "figure": figure_label,
+            "direction": direction,
+            "applied": applied,
+            "not_found": not_found,
+        }
+
+    try:
+        return await run_dazpy(_run)
+    except Exception as e:
+        handle_dazpy_error(e)
