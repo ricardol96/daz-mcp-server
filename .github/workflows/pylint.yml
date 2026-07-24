@@ -21,4 +21,9 @@ jobs:
         pip install pylint pytest pytest-asyncio respx
     - name: Analysing the code with pylint
       run: |
-        pylint $(git ls-files '*.py')
+        # tests/ gets two extra disables for the standard pytest-fixture-as-
+        # parameter idiom (redefined-outer-name, unused-argument); see the
+        # rationale in pyproject.toml's [tool.pylint.messages_control] and
+        # daz-mcp-server-0t0.
+        pylint $(git ls-files '*.py' | grep -v '^tests/')
+        pylint --disable=redefined-outer-name,unused-argument $(git ls-files 'tests/*.py')

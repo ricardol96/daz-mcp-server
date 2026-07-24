@@ -46,3 +46,29 @@ dev = [
     "pytest-asyncio>=0.24",
     "respx>=0.21",
 ]
+
+[tool.pylint.messages_control]
+# Rationale (daz-mcp-server-0t0): every tool function in tools/*.py that talks to
+# DAZ Studio catches `Exception` broadly on purpose and routes it into
+# handle_dazpy_error()'s typed-exception dispatch (see _errors.py) so callers get a
+# single well-formed ToolError regardless of which dazpy/httpx exception fired.
+# integration_test.py's runner does the same for its own reason: it must keep
+# testing the remaining tools after one throws, so it can report a full pass/fail
+# summary. Confirmed by sampling; not a defect in either case.
+disable = ["broad-exception-caught"]
+
+# redefined-outer-name and unused-argument are NOT disabled here. In tests/ they
+# are overwhelmingly the standard pytest-fixture-as-parameter idiom (e.g. every
+# test taking `live_client`), but in src/ a handful of hits are real -- e.g.
+# daz_browse_category's `sort_by` parameter is accepted but never passed through
+# to the underlying call. Blanket-disabling repo-wide would hide those. See
+# pylint.yml, which scopes the two test-idiom disables to tests/ only, and
+# daz-mcp-server-r13, which tracks auditing the remaining src/ hits individually.
+#
+# no-name-in-module / no-member are also left enabled: sampling showed these are
+# not dynamic-attribute false positives but real stale imports from the
+# pre-refactor `vangard_daz_mcp.server` module path (see daz-mcp-server-ful).
+#
+# missing-*-docstring is left enabled: whether to write the ~491 missing
+# docstrings or suppress the check is a real team decision, not a false
+# positive to tune away (tracked in daz-mcp-server-dk7).
