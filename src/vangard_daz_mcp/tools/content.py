@@ -39,7 +39,11 @@ async def daz_list_categories(parent_path: str = "") -> dict[str, Any]:
 
 
 @mcp.tool()
-async def daz_browse_category(category_path: str, sort_by: str = "name") -> dict[str, Any]:
+async def daz_browse_category(
+    category_path: str,
+    sort_by: str = "name",  # pylint: disable=unused-argument
+    # Only "name" is currently supported; see docstring below.
+) -> dict[str, Any]:
     """List .duf content files in a content library category path.
 
     Searches all configured DAZ content directories and deduplicates by filename.

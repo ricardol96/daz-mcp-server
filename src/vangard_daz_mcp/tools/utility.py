@@ -707,7 +707,8 @@ async def daz_stop_recording() -> dict[str, Any]:
 @mcp.tool()
 async def daz_replay_macro(
     macro_name: str,
-    parameters: dict[str, Any] | None = None,
+    parameters: dict[str, Any] | None = None,  # pylint: disable=unused-argument
+    # Parameter substitution not yet implemented; see docstring below.
 ) -> dict[str, Any]:
     """Replay a saved macro with optional parameter substitution.
 

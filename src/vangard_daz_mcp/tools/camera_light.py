@@ -633,7 +633,8 @@ async def daz_create_camera(
 @mcp.tool()
 async def daz_set_mood_lighting(
     mood: str,
-    figure_label: str | None = None,
+    figure_label: str | None = None,  # pylint: disable=unused-argument
+    # Reserved for future per-figure filtering; see docstring below.
 ) -> dict[str, Any]:
     """Apply a mood-based lighting colour and intensity adjustment to all scene lights.
 
@@ -692,7 +693,8 @@ async def daz_set_mood_lighting(
 @mcp.tool()
 async def daz_apply_time_of_day(
     time_of_day: str,
-    figure_label: str | None = None,
+    figure_label: str | None = None,  # pylint: disable=unused-argument
+    # Reserved for future per-figure filtering; see docstring below.
 ) -> dict[str, Any]:
     """Adjust all scene lights to simulate a particular time of day.
 

@@ -130,7 +130,8 @@ async def _execute_render_batch(body: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
-async def _lifespan(server: FastMCP):
+async def _lifespan(server: FastMCP):  # pylint: disable=unused-argument
+    # `server` is required by FastMCP's lifespan callback signature.
     headers = {"X-API-Token": DAZ_API_TOKEN} if DAZ_API_TOKEN else {}
     async with httpx.AsyncClient(
         base_url=BASE_URL, timeout=DAZ_TIMEOUT, headers=headers

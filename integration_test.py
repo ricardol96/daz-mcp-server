@@ -154,7 +154,8 @@ async def init_server(base_url: str, token: str) -> httpx.AsyncClient:
 # Test suites
 # ---------------------------------------------------------------------------
 
-async def test_infrastructure(scene: dict) -> None:
+async def test_infrastructure(scene: dict) -> None:  # pylint: disable=unused-argument
+    # `scene` kept for a uniform signature with the other test_* suite functions.
     cat = "infrastructure"
     print(f"\n\033[1m[{cat}]\033[0m")
 
@@ -375,7 +376,8 @@ async def test_lighting_tools(scene: dict) -> None:
                server.daz_validate_scene())
 
 
-async def test_checkpoint_system(scene: dict) -> None:
+async def test_checkpoint_system(scene: dict) -> None:  # pylint: disable=unused-argument
+    # `scene` kept for a uniform signature with the other test_* suite functions.
     cat = "checkpoint system"
     print(f"\n\033[1m[{cat}]\033[0m")
 
