@@ -36,6 +36,8 @@ import vangard_daz_mcp.server as server  # noqa: E402 (after path manipulation)
 
 @dataclass
 class Result:
+    """Outcome of a single tool call, tracked for the final summary report."""
+
     name: str
     category: str
     passed: bool
@@ -155,7 +157,10 @@ async def init_server(base_url: str, token: str) -> httpx.AsyncClient:
 # ---------------------------------------------------------------------------
 
 async def test_infrastructure(scene: dict) -> None:  # pylint: disable=unused-argument
-    # `scene` kept for a uniform signature with the other test_* suite functions.
+    """Exercise status, execute, lighting-preset, and scene-validation tools.
+
+    `scene` kept for a uniform signature with the other test_* suite functions.
+    """
     cat = "infrastructure"
     print(f"\n\033[1m[{cat}]\033[0m")
 
@@ -197,6 +202,7 @@ async def test_infrastructure(scene: dict) -> None:  # pylint: disable=unused-ar
 
 
 async def test_content_library() -> None:
+    """Exercise category listing and browsing tools."""
     cat = "content library"
     print(f"\n\033[1m[{cat}]\033[0m")
 
@@ -211,6 +217,7 @@ async def test_content_library() -> None:
 
 
 async def test_figure_tools(scene: dict) -> None:
+    """Exercise node inspection, morph, emotion, and spatial-query tools on the first figure."""
     cat = "figure tools"
     figures = scene.get("figures", [])
     label = figures[0]["label"] if figures else None
@@ -292,6 +299,7 @@ async def test_figure_tools(scene: dict) -> None:
 
 
 async def test_camera_tools(scene: dict) -> None:
+    """Exercise camera selection, framing, and preset tools."""
     cat = "camera tools"
     cameras = scene.get("cameras", [])
     figures = scene.get("figures", [])
@@ -357,6 +365,7 @@ async def test_camera_tools(scene: dict) -> None:
 
 
 async def test_lighting_tools(scene: dict) -> None:
+    """Exercise lighting-preset and mood/time-of-day tools."""
     cat = "lighting tools"
     figures = scene.get("figures", [])
     fig = figures[0]["label"] if figures else None
@@ -377,7 +386,10 @@ async def test_lighting_tools(scene: dict) -> None:
 
 
 async def test_checkpoint_system(scene: dict) -> None:  # pylint: disable=unused-argument
-    # `scene` kept for a uniform signature with the other test_* suite functions.
+    """Exercise scene checkpoint save/restore/list tools.
+
+    `scene` kept for a uniform signature with the other test_* suite functions.
+    """
     cat = "checkpoint system"
     print(f"\n\033[1m[{cat}]\033[0m")
 
@@ -411,6 +423,7 @@ async def test_checkpoint_system(scene: dict) -> None:  # pylint: disable=unused
 
 
 async def test_animation_tools() -> None:
+    """Exercise keyframe and frame-range tools."""
     cat = "animation tools"
     print(f"\n\033[1m[{cat}]\033[0m")
 
@@ -428,6 +441,7 @@ async def test_animation_tools() -> None:
 
 
 async def test_batch_tools(scene: dict) -> None:
+    """Exercise batch property/transform/visibility/select tools."""
     cat = "batch tools"
     figures = scene.get("figures", [])
     fig = figures[0]["label"] if figures else None
@@ -452,6 +466,7 @@ async def test_batch_tools(scene: dict) -> None:
 
 
 async def test_async_render_tools() -> None:
+    """Exercise the async render request/status/result/cancel lifecycle."""
     cat = "async render tools"
     print(f"\n\033[1m[{cat}]\033[0m")
 
@@ -490,6 +505,7 @@ async def _noop():
 # ---------------------------------------------------------------------------
 
 def print_summary() -> int:
+    """Print the pass/fail/skip summary and return the process exit code."""
     passed = [r for r in _results if r.passed and not r.skipped]
     failed = [r for r in _results if not r.passed]
     skipped = [r for r in _results if r.skipped]
@@ -525,6 +541,7 @@ def print_summary() -> int:
 # ---------------------------------------------------------------------------
 
 async def main(host: str, port: int, verbose: bool) -> int:
+    """Connect to DazScriptServer, run every test suite, print a summary, and return exit code."""
     global _verbose
     _verbose = verbose
 

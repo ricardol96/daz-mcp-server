@@ -1,3 +1,4 @@
+"""Node transform tools: properties, selection, parenting, and deletion."""
 from __future__ import annotations
 
 from typing import Any

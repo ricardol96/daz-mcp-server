@@ -1,3 +1,4 @@
+"""Wardrobe tools: fitting, unfitting, and inspecting clothing/hair items."""
 from __future__ import annotations
 
 from typing import Any

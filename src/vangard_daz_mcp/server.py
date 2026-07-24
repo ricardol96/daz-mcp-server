@@ -12,6 +12,7 @@ from . import tools  # noqa: F401 — registers all @mcp.tool() functions
 
 
 def main() -> None:
+    """Run the FastMCP server (stdio transport)."""
     mcp.run()
 
 

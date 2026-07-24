@@ -43,22 +43,26 @@ _content_browser_client: httpx.AsyncClient | None = None
 
 
 def set_http_client(client: httpx.AsyncClient | None) -> None:
+    """Set (or clear) the shared DazScriptServer httpx client."""
     global _http_client
     _http_client = client
 
 
 def set_content_browser_client(client: httpx.AsyncClient | None) -> None:
+    """Set (or clear) the shared content-browser httpx client."""
     global _content_browser_client
     _content_browser_client = client
 
 
 def get_http_client() -> httpx.AsyncClient:
+    """Return the shared DazScriptServer httpx client, once the server lifespan has set it."""
     if _http_client is None:
         raise RuntimeError("HTTP client not initialised — server lifespan not running")
     return _http_client
 
 
 def get_content_browser_client() -> httpx.AsyncClient:
+    """Return the shared content-browser httpx client, once the server lifespan has set it."""
     if _content_browser_client is None:
         raise RuntimeError("Content browser client not initialised — server lifespan not running")
     return _content_browser_client
@@ -73,6 +77,7 @@ _daz_scene: DazScene | None = None
 
 
 def get_daz_client() -> DazClient:
+    """Return the singleton DazClient, creating it on first access."""
     global _daz_client
     if _daz_client is None:
         _daz_client = DazClient(
@@ -85,6 +90,7 @@ def get_daz_client() -> DazClient:
 
 
 def get_scene() -> DazScene:
+    """Return the singleton DazScene, creating it on first access."""
     global _daz_scene
     if _daz_scene is None:
         _daz_scene = DazScene(get_daz_client())

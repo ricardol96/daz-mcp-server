@@ -1,5 +1,8 @@
-# Importing each module here registers its @mcp.tool() decorators.
-# server.py does: from . import tools
+"""Tool modules for the Vangard DAZ MCP server.
+
+Importing each module here registers its @mcp.tool() decorators.
+server.py does: from . import tools
+"""
 
 from . import spatial       # noqa: F401
 from . import transform     # noqa: F401

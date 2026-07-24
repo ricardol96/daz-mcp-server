@@ -1,3 +1,4 @@
+"""Cinematography tools: shot composition, coverage, and camera/light rigs."""
 from __future__ import annotations
 
 import json

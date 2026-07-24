@@ -21,9 +21,10 @@ jobs:
         pip install pylint pytest pytest-asyncio respx
     - name: Analysing the code with pylint
       run: |
-        # tests/ gets two extra disables for the standard pytest-fixture-as-
-        # parameter idiom (redefined-outer-name, unused-argument); see the
-        # rationale in pyproject.toml's [tool.pylint.messages_control] and
-        # daz-mcp-server-0t0.
+        # tests/ gets extra disables: redefined-outer-name/unused-argument for
+        # the standard pytest-fixture-as-parameter idiom (daz-mcp-server-0t0),
+        # and missing-function/class-docstring since 99% of the 467 hits there
+        # are self-descriptively-named test_* functions and TestXxx grouping
+        # classes (daz-mcp-server-dk7) -- module docstrings stay required.
         pylint $(git ls-files '*.py' | grep -v '^tests/')
-        pylint --disable=redefined-outer-name,unused-argument $(git ls-files 'tests/*.py')
+        pylint --disable=redefined-outer-name,unused-argument,missing-function-docstring,missing-class-docstring $(git ls-files 'tests/*.py')

@@ -1,3 +1,4 @@
+"""Spatial analysis tools: bounding boxes, overlap, and scene layout."""
 from __future__ import annotations
 
 import math
