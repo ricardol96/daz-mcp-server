@@ -282,7 +282,9 @@ async def daz_set_subdivision(node_label: str, level: int) -> dict[str, Any]:
     """
     if level < 0 or level > 4:
         raise ToolError(f"Subdivision level must be between 0 and 4, got {level}")
-    return await _execute_by_id("vangard-set-subdivision", {"nodeLabel": node_label, "level": level})
+    return await _execute_by_id(
+        "vangard-set-subdivision", {"nodeLabel": node_label, "level": level}
+    )
 
 
 @mcp.tool()

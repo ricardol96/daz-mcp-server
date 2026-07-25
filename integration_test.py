@@ -230,7 +230,9 @@ async def test_infrastructure(scene: dict) -> None:  # pylint: disable=unused-ar
                daz_get_render_settings())
 
     await _run("daz_validate_script – clean script", cat,
-               daz_validate_script("(function(){ var n = Scene.findNodeByLabel('x'); return n; })()"))
+               daz_validate_script(
+                   "(function(){ var n = Scene.findNodeByLabel('x'); return n; })()"
+               ))
 
     await _run("daz_validate_script – known anti-pattern", cat,
                daz_validate_script("var cam = new DzNewCameraAction(); cam.trigger();"))
@@ -617,7 +619,10 @@ async def main(host: str, port: int, verbose: bool) -> int:
             lights = scene.get("lights", [])
             print(f"  figures={len(figs)}  cameras={len(cams)}  lights={len(lights)}")
         except Exception as exc:
-            print(f"  \033[33mWarning: daz_scene_info failed ({exc}) — scene-dependent tests will be skipped\033[0m")
+            print(
+                f"  \033[33mWarning: daz_scene_info failed ({exc}) — "
+                "scene-dependent tests will be skipped\033[0m"
+            )
             scene = {}
 
         # 4. Run test suites
@@ -640,9 +645,15 @@ async def main(host: str, port: int, verbose: bool) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="vangard-daz-mcp live integration tests")
-    parser.add_argument("--host", default="localhost", help="DazScriptServer host (default: localhost)")
-    parser.add_argument("--port", type=int, default=18811, help="DazScriptServer port (default: 18811)")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Show response detail and skip reasons")
+    parser.add_argument(
+        "--host", default="localhost", help="DazScriptServer host (default: localhost)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=18811, help="DazScriptServer port (default: 18811)"
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Show response detail and skip reasons"
+    )
     args = parser.parse_args()
 
     exit_code = asyncio.run(main(args.host, args.port, args.verbose))

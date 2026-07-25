@@ -294,9 +294,15 @@ async def daz_check_overlap(
         }
 
         if overlaps:
-            x_overlap = min(bb1["max"]["x"], bb2["max"]["x"]) - max(bb1["min"]["x"], bb2["min"]["x"])
-            y_overlap = min(bb1["max"]["y"], bb2["max"]["y"]) - max(bb1["min"]["y"], bb2["min"]["y"])
-            z_overlap = min(bb1["max"]["z"], bb2["max"]["z"]) - max(bb1["min"]["z"], bb2["min"]["z"])
+            x_overlap = (
+                min(bb1["max"]["x"], bb2["max"]["x"]) - max(bb1["min"]["x"], bb2["min"]["x"])
+            )
+            y_overlap = (
+                min(bb1["max"]["y"], bb2["max"]["y"]) - max(bb1["min"]["y"], bb2["min"]["y"])
+            )
+            z_overlap = (
+                min(bb1["max"]["z"], bb2["max"]["z"]) - max(bb1["min"]["z"], bb2["min"]["z"])
+            )
             pen_depth = min(x_overlap, y_overlap, z_overlap)
 
             if x_overlap <= y_overlap and x_overlap <= z_overlap:

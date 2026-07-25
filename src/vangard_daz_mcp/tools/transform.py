@@ -199,7 +199,8 @@ async def daz_batch_transform(
 
     Args:
         node_labels: List of node display labels to transform.
-        transforms: Dictionary of property names to values (e.g., {"XTranslate": 50, "YRotate": 45}).
+        transforms: Dictionary of property names to values
+            (e.g., {"XTranslate": 50, "YRotate": 45}).
 
     Returns:
       - results: Array of result objects with success, node, applied properties, error

@@ -149,9 +149,15 @@ async def daz_search_content(query: str, max_results: int = 10) -> dict[str, Any
             json={"query": query, "max_results": max_results},
         )
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException):
-        return {"available": False, "reason": "Content browser not reachable at " + CONTENT_BROWSER_URL}
+        return {
+            "available": False,
+            "reason": "Content browser not reachable at " + CONTENT_BROWSER_URL,
+        }
     if response.status_code != 200:
-        return {"available": False, "reason": f"Content browser returned HTTP {response.status_code}"}
+        return {
+            "available": False,
+            "reason": f"Content browser returned HTTP {response.status_code}",
+        }
     return response.json()
 
 
@@ -173,27 +179,45 @@ async def daz_load_product(product_name: str) -> dict[str, Any]:
     try:
         search_response = await client.get("/api/v1/products", params={"q": product_name})
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException):
-        return {"available": False, "reason": "Content browser not reachable at " + CONTENT_BROWSER_URL}
+        return {
+            "available": False,
+            "reason": "Content browser not reachable at " + CONTENT_BROWSER_URL,
+        }
     if search_response.status_code != 200:
-        return {"available": False, "reason": f"Content browser returned HTTP {search_response.status_code}"}
+        return {
+            "available": False,
+            "reason": f"Content browser returned HTTP {search_response.status_code}",
+        }
 
     products = search_response.json()
     if isinstance(products, dict):
         products = products.get("products", products.get("results", []))
     if not products:
-        return {"available": True, "found": False, "reason": f"No product found matching '{product_name}'"}
+        return {
+            "available": True,
+            "found": False,
+            "reason": f"No product found matching '{product_name}'",
+        }
 
     product = products[0]
     duf_path = product.get("path") or product.get("file_path") or product.get("duf_path")
     if not duf_path:
-        return {"available": True, "found": True, "error": "Product record has no file path", "product": product}
+        return {
+            "available": True,
+            "found": True,
+            "error": "Product record has no file path",
+            "product": product,
+        }
 
     try:
         load_response = await client.post("/api/v1/scene/load", json={"path": duf_path})
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException):
         return {"available": False, "reason": "Content browser not reachable during load"}
     if load_response.status_code != 200:
-        return {"available": False, "reason": f"Scene load returned HTTP {load_response.status_code}"}
+        return {
+            "available": False,
+            "reason": f"Scene load returned HTTP {load_response.status_code}",
+        }
 
     result = load_response.json()
     result["product"] = product

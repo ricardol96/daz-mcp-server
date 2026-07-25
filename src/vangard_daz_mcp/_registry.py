@@ -34,7 +34,8 @@ async def _register_scripts(client: httpx.AsyncClient) -> None:
 #   MainWindow – the main window
 # ---------------------------------------------------------------------------
 
-# Returns: {sceneFile, selectedNode, figures:[{name,label,type}], cameras:[...], lights:[...], totalNodes}
+# Returns: {sceneFile, selectedNode, figures:[{name,label,type}], cameras:[...],
+#           lights:[...], totalNodes}
 # Uses skeleton list (characters + clothing) rather than all nodes (potentially thousands).
 _SCENE_INFO_SCRIPT = """\
 (function(){
@@ -2876,7 +2877,8 @@ _FIND_NEARBY_NODES_SCRIPT = """\
 """
 
 # args: {sequenceType, characters: [], duration, fps}
-# sequenceType: "establishing-medium-closeup", "shot-reverse-shot", "orbit", "push-in", "walkthrough"
+# sequenceType: "establishing-medium-closeup", "shot-reverse-shot", "orbit",
+#               "push-in", "walkthrough"
 # Returns: {cameras: [{label, position, frameRange}], totalFrames, sequenceType}
 # Creates multiple cameras and sets up keyframes for cinematic sequences
 _CREATE_SHOT_SEQUENCE_SCRIPT = """\
@@ -3055,7 +3057,8 @@ _CREATE_SHOT_SEQUENCE_SCRIPT = """\
 })()
 """
 
-# args: {char1Label, char2Label, dialogueBeats: [{speaker, startFrame, endFrame, emotion, gesture?}]}
+# args: {char1Label, char2Label,
+#        dialogueBeats: [{speaker, startFrame, endFrame, emotion, gesture?}]}
 # Returns: {char1, char2, beatsApplied: [{beat, actions}], totalFrames}
 # Choreograph animated conversation between two characters
 _ANIMATE_CONVERSATION_SCRIPT = """\
@@ -3531,7 +3534,8 @@ _CREATE_SCENE_SCRIPT = """\
 """
 
 # args: {cameraLabel, movementType, startFrame, endFrame, intensity}
-# movementType: "dolly-in", "dolly-out", "pan-left", "pan-right", "tilt-up", "tilt-down", "crane-up", "crane-down", "handheld-shake"
+# movementType: "dolly-in", "dolly-out", "pan-left", "pan-right", "tilt-up",
+#               "tilt-down", "crane-up", "crane-down", "handheld-shake"
 # Returns: {camera, movementType, keyframesSet, frameRange}
 # Animate common camera movements with keyframes
 _ANIMATE_CAMERA_MOVEMENT_SCRIPT = """\
@@ -7389,7 +7393,8 @@ _REGISTRY: dict[str, tuple[str, str]] = {
     ),
     # Phase 1.5: Render quality preset (used by daz_set_render_quality)
     "vangard-set-render-quality": (
-        "Set Iray render quality preset (draft/preview/good/final) via Max Samples and Render Quality properties",
+        "Set Iray render quality preset (draft/preview/good/final) via Max Samples and "
+        "Render Quality properties",
         _SET_RENDER_QUALITY_SCRIPT,
     ),
     # Phase 2: Emotional direction
@@ -7430,7 +7435,8 @@ _REGISTRY: dict[str, tuple[str, str]] = {
     ),
     # Phase 2: Scene layout & proximity
     "vangard-get-scene-layout": (
-        "Get spatial map of all scene nodes (figures, cameras, lights, props) with positions and bounds",
+        "Get spatial map of all scene nodes (figures, cameras, lights, props) with "
+        "positions and bounds",
         _GET_SCENE_LAYOUT_SCRIPT,
     ),
     "vangard-find-nearby-nodes": (
@@ -7442,11 +7448,13 @@ _REGISTRY: dict[str, tuple[str, str]] = {
         _CREATE_SHOT_SEQUENCE_SCRIPT,
     ),
     "vangard-animate-conversation": (
-        "Choreograph animated conversation between two characters with look-at and emotion keyframes",
+        "Choreograph animated conversation between two characters with look-at and "
+        "emotion keyframes",
         _ANIMATE_CONVERSATION_SCRIPT,
     ),
     "vangard-create-scene": (
-        "Generate a complete scene from natural language description with lighting, cameras, and positioning",
+        "Generate a complete scene from natural language description with lighting, "
+        "cameras, and positioning",
         _CREATE_SCENE_SCRIPT,
     ),
     "vangard-animate-camera-movement": (
@@ -7482,19 +7490,23 @@ _REGISTRY: dict[str, tuple[str, str]] = {
         _ANIMATE_LIGHT_SCRIPT,
     ),
     "vangard-create-light-sequence": (
-        "Create a multi-light animated sequence for a mood or time-of-day (day-to-night, romantic, etc.)",
+        "Create a multi-light animated sequence for a mood or time-of-day "
+        "(day-to-night, romantic, etc.)",
         _CREATE_LIGHT_SEQUENCE_SCRIPT,
     ),
     "vangard-plan-shot": (
-        "Analyse the current scene and recommend camera, lighting and character settings for a shot type",
+        "Analyse the current scene and recommend camera, lighting and character "
+        "settings for a shot type",
         _PLAN_SHOT_SCRIPT,
     ),
     "vangard-create-storyboard": (
-        "Generate a storyboard of sequential shots with metadata and camera settings saved to scene",
+        "Generate a storyboard of sequential shots with metadata and camera "
+        "settings saved to scene",
         _CREATE_STORYBOARD_SCRIPT,
     ),
     "vangard-set-focus-point": (
-        "Set depth-of-field focus distance and aperture on a camera, optionally targeting a scene node",
+        "Set depth-of-field focus distance and aperture on a camera, optionally "
+        "targeting a scene node",
         _SET_FOCUS_POINT_SCRIPT,
     ),
     "vangard-animate-focus-pull": (
@@ -7506,7 +7518,8 @@ _REGISTRY: dict[str, tuple[str, str]] = {
         _SET_SCENE_ATMOSPHERE_SCRIPT,
     ),
     "vangard-apply-visual-style": (
-        "Apply a holistic cinematic visual style (noir, golden-hour, high-key, etc.) to lights and environment",
+        "Apply a holistic cinematic visual style (noir, golden-hour, high-key, etc.) "
+        "to lights and environment",
         _APPLY_VISUAL_STYLE_SCRIPT,
     ),
     "vangard-read-node-config": (
@@ -7625,7 +7638,8 @@ _REGISTRY: dict[str, tuple[str, str]] = {
     ),
     # Phase 6.5: Figure diagnostics
     "vangard-get-figure-info": (
-        "Return generation, sex, active morphs, fitted item count, and subdivision level for a figure",
+        "Return generation, sex, active morphs, fitted item count, and subdivision "
+        "level for a figure",
         _GET_FIGURE_INFO_SCRIPT,
     ),
     "vangard-set-subdivision": (

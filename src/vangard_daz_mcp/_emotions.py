@@ -12,15 +12,26 @@ from __future__ import annotations
 _EMOTION_DEFINITIONS: dict[str, dict] = {
     "happy": {
         "morphs": [
-            {"names": ["PHMSmile", "Smile", "CTRLSmile", "MouthSmile", "SmileSimple"], "value": 0.85},
+            {
+                "names": ["PHMSmile", "Smile", "CTRLSmile", "MouthSmile", "SmileSimple"],
+                "value": 0.85,
+            },
             {"names": ["PHMEyesSquint", "EyesSquint", "EyeSquintL", "SquintEyes"], "value": 0.25},
         ],
         "body": [{"bone": "chestUpper", "property": "XRotate", "value": 3.0}],
     },
     "sad": {
         "morphs": [
-            {"names": ["PHMFrown", "Frown", "MouthFrown", "CTRLFrown", "FrownSimple"], "value": 0.75},
-            {"names": ["PHMBrowInnerDown", "BrowDownL", "BrowDown", "CTRLBrowDown", "BrowInnerDown"], "value": 0.6},
+            {
+                "names": ["PHMFrown", "Frown", "MouthFrown", "CTRLFrown", "FrownSimple"],
+                "value": 0.75,
+            },
+            {
+                "names": [
+                    "PHMBrowInnerDown", "BrowDownL", "BrowDown", "CTRLBrowDown", "BrowInnerDown",
+                ],
+                "value": 0.6,
+            },
             {"names": ["PHMEyesSquint", "EyesSquint", "EyeSquintL"], "value": 0.3},
         ],
         "body": [{"bone": "chestUpper", "property": "XRotate", "value": -6.0}],
@@ -28,15 +39,24 @@ _EMOTION_DEFINITIONS: dict[str, dict] = {
     "angry": {
         "morphs": [
             {"names": ["PHMFrown", "Frown", "MouthFrown", "CTRLFrown"], "value": 0.5},
-            {"names": ["PHMBrowDown", "BrowDown", "BrowDownLeft", "CTRLBrowDown", "BrowDownR"], "value": 0.85},
+            {
+                "names": ["PHMBrowDown", "BrowDown", "BrowDownLeft", "CTRLBrowDown", "BrowDownR"],
+                "value": 0.85,
+            },
             {"names": ["PHMNoseWrinkle", "NoseWrinkle", "NoseSneerL", "NoseSneer"], "value": 0.4},
-            {"names": ["PHMEyesTighten", "EyesTighten", "EyeSquintL", "CheekSquintL"], "value": 0.4},
+            {
+                "names": ["PHMEyesTighten", "EyesTighten", "EyeSquintL", "CheekSquintL"],
+                "value": 0.4,
+            },
         ],
         "body": [{"bone": "chestUpper", "property": "XRotate", "value": -3.0}],
     },
     "surprised": {
         "morphs": [
-            {"names": ["PHMBrowUp", "BrowUp", "BrowInnerUpL", "CTRLBrowUp", "BrowsUp"], "value": 0.85},
+            {
+                "names": ["PHMBrowUp", "BrowUp", "BrowInnerUpL", "CTRLBrowUp", "BrowsUp"],
+                "value": 0.85,
+            },
             {"names": ["PHMEyesWide", "EyesWide", "EyeOpenL", "EyeWideL"], "value": 0.75},
             {"names": ["PHMMouthOpen", "MouthOpen", "CTRLMouthOpen", "JawOpen"], "value": 0.6},
         ],
@@ -54,7 +74,10 @@ _EMOTION_DEFINITIONS: dict[str, dict] = {
         "morphs": [
             {"names": ["PHMNoseWrinkle", "NoseWrinkle", "NoseSneerL", "NoseSneer"], "value": 0.75},
             {"names": ["PHMFrown", "Frown", "MouthFrown", "CTRLFrown"], "value": 0.4},
-            {"names": ["PHMUpperLipUp", "UpperLipUp", "MouthUpperUp_L", "LipUpperUp_L"], "value": 0.3},
+            {
+                "names": ["PHMUpperLipUp", "UpperLipUp", "MouthUpperUp_L", "LipUpperUp_L"],
+                "value": 0.3,
+            },
         ],
         "body": [],
     },
@@ -73,7 +96,10 @@ _EMOTION_DEFINITIONS: dict[str, dict] = {
     },
     "bored": {
         "morphs": [
-            {"names": ["PHMEyesClosed", "EyesClosed", "EyeClosedL", "CTRLEyesClosed"], "value": 0.4},
+            {
+                "names": ["PHMEyesClosed", "EyesClosed", "EyeClosedL", "CTRLEyesClosed"],
+                "value": 0.4,
+            },
             {"names": ["PHMFrown", "Frown", "MouthFrown"], "value": 0.2},
         ],
         "body": [{"bone": "chestUpper", "property": "XRotate", "value": -4.0}],

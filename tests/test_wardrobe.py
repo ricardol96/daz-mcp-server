@@ -61,7 +61,12 @@ class TestListFittedItems:
             "figure": "Genesis 9",
             "fitted_count": 2,
             "fitted_items": [
-                {"label": "Sci-Fi Bodysuit", "name": "SciFiBodysuit", "type": "clothing", "element_id": 42},
+                {
+                    "label": "Sci-Fi Bodysuit",
+                    "name": "SciFiBodysuit",
+                    "type": "clothing",
+                    "element_id": 42,
+                },
                 {"label": "Boots", "name": "Boots", "type": "prop", "element_id": 43},
             ],
         }
@@ -164,7 +169,12 @@ class TestFitClothing:
             import json
             body = json.loads(request.content)
             captured["args"] = body.get("args", {})
-            return _ok({"success": True, "clothing": "Dress", "figure": "G9", "method": "setFollowTarget"})
+            return _ok({
+                "success": True,
+                "clothing": "Dress",
+                "figure": "G9",
+                "method": "setFollowTarget",
+            })
 
         mock_daz.post("/scripts/vangard-fit-clothing/execute").mock(side_effect=capture)
         await daz_fit_clothing("Dress", "G9")

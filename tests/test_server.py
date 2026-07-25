@@ -133,7 +133,9 @@ async def test_daz_execute_with_args(mock_daz):
 
 
 async def test_daz_execute_script_failure(mock_daz):
-    mock_daz.post("/execute").mock(return_value=_fail("ReferenceError: foo is not defined", ["line1"]))
+    mock_daz.post("/execute").mock(
+        return_value=_fail("ReferenceError: foo is not defined", ["line1"])
+    )
     with pytest.raises(ToolError, match="ReferenceError"):
         await daz_execute(script="foo();")
 
@@ -211,7 +213,10 @@ async def test_execute_by_id_retries_on_404(mock_daz):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return httpx.Response(404, json={"success": False, "error": "Script not found: 'vangard-scene-info'"})
+            return httpx.Response(
+                404,
+                json={"success": False, "error": "Script not found: 'vangard-scene-info'"},
+            )
         return _ok(_SCENE_RESULT)
 
     mock_daz.post("/scripts/vangard-scene-info/execute").mock(side_effect=scene_info_side_effect)
@@ -250,7 +255,9 @@ async def test_daz_get_node_ok(mock_daz):
 
 
 async def test_daz_get_node_not_found(mock_daz):
-    mock_daz.post("/scripts/vangard-get-node/execute").mock(return_value=_fail("Node not found: Ghost"))
+    mock_daz.post("/scripts/vangard-get-node/execute").mock(
+        return_value=_fail("Node not found: Ghost")
+    )
     with pytest.raises(ToolError, match="Node not found"):
         await daz_get_node("Ghost")
 
@@ -269,19 +276,25 @@ async def test_daz_set_property_ok(mock_daz):
 
 
 async def test_daz_set_property_node_not_found(mock_daz):
-    mock_daz.post("/scripts/vangard-set-property/execute").mock(return_value=_fail("Node not found: Ghost"))
+    mock_daz.post("/scripts/vangard-set-property/execute").mock(
+        return_value=_fail("Node not found: Ghost")
+    )
     with pytest.raises(ToolError, match="Node not found"):
         await daz_set_property("Ghost", "Rotation X", 0.0)
 
 
 async def test_daz_set_property_prop_not_found(mock_daz):
-    mock_daz.post("/scripts/vangard-set-property/execute").mock(return_value=_fail("Property not found: Foo on Genesis 9"))
+    mock_daz.post("/scripts/vangard-set-property/execute").mock(
+        return_value=_fail("Property not found: Foo on Genesis 9")
+    )
     with pytest.raises(ToolError, match="Property not found"):
         await daz_set_property("Genesis 9", "Foo", 1.0)
 
 
 async def test_daz_set_property_not_numeric(mock_daz):
-    mock_daz.post("/scripts/vangard-set-property/execute").mock(return_value=_fail("Property is not numeric: Label"))
+    mock_daz.post("/scripts/vangard-set-property/execute").mock(
+        return_value=_fail("Property is not numeric: Label")
+    )
     with pytest.raises(ToolError, match="not numeric"):
         await daz_set_property("Genesis 9", "Label", 1.0)
 
@@ -355,12 +368,17 @@ def _status_response(request_id: str, status: str, progress: float = 0.0) -> htt
             "progress": progress,
             "submitted_at": "2026-04-08T12:00:00.000",
             "started_at": "2026-04-08T12:00:01.000" if status != "queued" else None,
-            "completed_at": "2026-04-08T12:00:10.000" if status in ("completed", "failed", "cancelled") else None,
+            "completed_at": (
+                "2026-04-08T12:00:10.000" if status in ("completed", "failed", "cancelled")
+                else None
+            ),
         },
     )
 
 
-def _result_response(request_id: str, status: str = "completed", result=None, error: str = "") -> httpx.Response:
+def _result_response(
+    request_id: str, status: str = "completed", result=None, error: str = ""
+) -> httpx.Response:
     return httpx.Response(
         200,
         json={
@@ -624,7 +642,11 @@ async def test_daz_cancel_script_request(mock_daz):
     mock_daz.delete("/requests/script-abc").mock(
         return_value=httpx.Response(
             200,
-            json={"request_id": "script-abc", "status": "cancelled", "cancelled_at": "2026-04-08T12:00:05.000"},
+            json={
+                "request_id": "script-abc",
+                "status": "cancelled",
+                "cancelled_at": "2026-04-08T12:00:05.000",
+            },
         )
     )
     result = await daz_cancel_request("script-abc")
@@ -636,7 +658,11 @@ async def test_daz_cancel_render_request(mock_daz):
     mock_daz.post("/render/rnd-abc123/cancel").mock(
         return_value=httpx.Response(
             200,
-            json={"request_id": "rnd-abc123", "status": "cancelled", "cancelled_at": "2026-04-08T12:00:05.000"},
+            json={
+                "request_id": "rnd-abc123",
+                "status": "cancelled",
+                "cancelled_at": "2026-04-08T12:00:05.000",
+            },
         )
     )
     result = await daz_cancel_request("rnd-abc123")
@@ -674,8 +700,18 @@ async def test_daz_cancel_render_not_found(mock_daz):
 
 _LIST_RESPONSE = {
     "requests": [
-        {"request_id": "render-aaa", "status": "completed", "progress": 1.0, "submitted_at": "2026-04-08T12:00:00.000"},
-        {"request_id": "render-bbb", "status": "queued",    "progress": 0.0, "submitted_at": "2026-04-08T12:01:00.000"},
+        {
+            "request_id": "render-aaa",
+            "status": "completed",
+            "progress": 1.0,
+            "submitted_at": "2026-04-08T12:00:00.000",
+        },
+        {
+            "request_id": "render-bbb",
+            "status": "queued",
+            "progress": 0.0,
+            "submitted_at": "2026-04-08T12:01:00.000",
+        },
     ],
     "total": 2,
     "queued": 1,
@@ -855,7 +891,10 @@ async def test_daz_save_scene_copy_ok(mock_scene):
 
 async def test_daz_save_scene_copy_sends_correct_path(mock_scene):
     mock_scene.save_copy.return_value = {
-        "ok": True, "path": "C:/out/copy.duf", "source": "C:/scenes/orig.duf", "method": "file-copy",
+        "ok": True,
+        "path": "C:/out/copy.duf",
+        "source": "C:/scenes/orig.duf",
+        "method": "file-copy",
     }
     await daz_save_scene_copy("C:/out/copy.duf")
     mock_scene.save_copy.assert_called_once_with("C:/out/copy.duf")
@@ -954,7 +993,9 @@ async def test_daz_wait_for_scene_event_multiple_types(mock_daz):
             headers={"content-type": "text/event-stream"},
         )
     )
-    result = await daz_wait_for_scene_event(["render.started", "render.finished"], timeout_seconds=5)
+    result = await daz_wait_for_scene_event(
+        ["render.started", "render.finished"], timeout_seconds=5
+    )
     assert result["type"] == "render.started"
 
 

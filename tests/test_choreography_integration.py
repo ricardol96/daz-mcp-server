@@ -90,7 +90,12 @@ class TestAnimateConversation:
             char2_label=second_figure_label,
             dialogue_beats=[
                 {"speaker": figure_label, "startFrame": 0, "endFrame": 30, "emotion": "neutral"},
-                {"speaker": second_figure_label, "startFrame": 30, "endFrame": 60, "emotion": "neutral"},
+                {
+                    "speaker": second_figure_label,
+                    "startFrame": 30,
+                    "endFrame": 60,
+                    "emotion": "neutral",
+                },
             ],
         )
         assert isinstance(result, dict)
