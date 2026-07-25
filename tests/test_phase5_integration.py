@@ -42,6 +42,12 @@ from vangard_daz_mcp.tools.render import daz_set_render_output
 from vangard_daz_mcp.tools.scene import daz_scene_info, daz_save_scene, daz_get_selected_nodes
 from vangard_daz_mcp.tools.transform import daz_delete_node, daz_set_property
 
+# pylint: disable=duplicate-code
+# This file intentionally duplicates conftest.py's live_client/figure_label
+# fixtures (see SKILL_DEVELOPMENT.md and this module's docstring) rather than
+# importing them, so it can run standalone against Phase-5 tools without
+# depending on the shared conftest's fixture set.
+
 BASE_URL = "http://localhost:18811"
 
 # ---------------------------------------------------------------------------

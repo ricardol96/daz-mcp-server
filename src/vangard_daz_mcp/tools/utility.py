@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 from fastmcp.exceptions import ToolError
 
-from .._mcp import mcp, _execute_by_id
+from .._mcp import mcp, _execute_by_id, _execute_payload, _execute_raw
 from .._client import get_http_client
 from .._errors import handle_network_error, check_response
 
@@ -85,27 +85,7 @@ async def daz_execute(
     Returns:
         Object with keys: success, result, output (list of print() lines), error.
     """
-    client = get_http_client()
-    payload: dict[str, Any] = {"script": script}
-    if args is not None:
-        payload["args"] = args
-
-    try:
-        response = await client.post("/execute", json=payload)
-        check_response(response)
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
-        handle_network_error(exc)
-
-    result = response.json()
-    if not result.get("success", False):
-        output_lines = result.get("output", [])
-        error_msg = result.get("error") or "Script execution failed"
-        detail = error_msg
-        if output_lines:
-            detail += "\n\nCaptured output:\n" + "\n".join(output_lines)
-        raise ToolError(detail)
-
-    return result
+    return await _execute_raw(script, args)
 
 
 @mcp.tool()
@@ -122,27 +102,10 @@ async def daz_execute_file(
     Returns:
         Object with keys: success, result, output (list of print() lines), error.
     """
-    client = get_http_client()
     payload: dict[str, Any] = {"scriptFile": script_file}
     if args is not None:
         payload["args"] = args
-
-    try:
-        response = await client.post("/execute", json=payload)
-        check_response(response)
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
-        handle_network_error(exc)
-
-    result = response.json()
-    if not result.get("success", False):
-        output_lines = result.get("output", [])
-        error_msg = result.get("error") or "Script execution failed"
-        detail = error_msg
-        if output_lines:
-            detail += "\n\nCaptured output:\n" + "\n".join(output_lines)
-        raise ToolError(detail)
-
-    return result
+    return await _execute_payload(payload)
 
 
 @mcp.tool()
@@ -431,7 +394,8 @@ async def daz_validate_script(script: str) -> dict[str, Any]:
     if "Scene.getNumNodes()" in script:
         suggestions.append(
             "Avoid iterating all nodes via getNumNodes() — scenes can have 3000+ nodes. "
-            "Use Scene.findNodeByLabel(), getNumSkeletons(), getNumCameras(), or getNumLights() instead"
+            "Use Scene.findNodeByLabel(), getNumSkeletons(), getNumCameras(), or "
+            "getNumLights() instead"
         )
 
     return {
@@ -830,7 +794,9 @@ async def daz_auto_improve_scene() -> dict[str, Any]:
     for issue in issues:
         issue_type = issue.get("type", "") if isinstance(issue, dict) else ""
         if issue_type == "missing_lights":
-            await _execute_by_id("vangard-create-light", {"lightType": "distant", "label": "Auto Light"})
+            await _execute_by_id(
+                "vangard-create-light", {"lightType": "distant", "label": "Auto Light"}
+            )
             fixed.append("Added missing light")
     return {"validation": validation, "fixed": fixed, "count": len(fixed)}
 
@@ -842,11 +808,17 @@ async def daz_suggest_next_action() -> dict[str, Any]:
     suggestions = []
     if isinstance(scene_info, dict):
         if not scene_info.get("figures"):
-            suggestions.append({"action": "daz_load_file", "reason": "No figures in scene - load a character"})
+            suggestions.append({
+                "action": "daz_load_file",
+                "reason": "No figures in scene - load a character",
+            })
         if not scene_info.get("lights"):
             suggestions.append({"action": "daz_create_light", "reason": "No lights - add lighting"})
         if not scene_info.get("cameras"):
-            suggestions.append({"action": "daz_create_camera", "reason": "No cameras - add a camera"})
+            suggestions.append({
+                "action": "daz_create_camera",
+                "reason": "No cameras - add a camera",
+            })
     if not suggestions:
         suggestions.append({"action": "daz_render", "reason": "Scene looks ready to render"})
     return {"suggestions": suggestions}
@@ -863,9 +835,21 @@ async def daz_explain_last_error() -> dict[str, Any]:
     """Explain common DAZ Studio errors and how to fix them."""
     return {
         "common_errors": [
-            {"error": "Node not found", "fix": "Check node label spelling; use daz_scene_info to list nodes"},
-            {"error": "Script execution failed", "fix": "Validate script with daz_validate_script first"},
-            {"error": "Connection refused", "fix": "Ensure DAZ Studio is running and DazScriptServer plugin is active"},
-            {"error": "Rate limit exceeded", "fix": "Wait a moment and retry; or increase rate limit in plugin settings"},
+            {
+                "error": "Node not found",
+                "fix": "Check node label spelling; use daz_scene_info to list nodes",
+            },
+            {
+                "error": "Script execution failed",
+                "fix": "Validate script with daz_validate_script first",
+            },
+            {
+                "error": "Connection refused",
+                "fix": "Ensure DAZ Studio is running and DazScriptServer plugin is active",
+            },
+            {
+                "error": "Rate limit exceeded",
+                "fix": "Wait a moment and retry; or increase rate limit in plugin settings",
+            },
         ]
     }

@@ -29,12 +29,15 @@ from ._registry import _register_scripts
 # Execute helpers — used by all tool modules
 # ---------------------------------------------------------------------------
 
-async def _execute(script: str, args: dict[str, Any] | None = None) -> Any:
-    """POST an inline DazScript to DazScriptServer; raise ToolError on failure."""
+async def _execute_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """POST a prebuilt /execute payload to DazScriptServer; raise ToolError on failure.
+
+    Returns the full response payload (success/result/output/error) — shared by
+    _execute_raw() (inline script), daz_execute_file (script-on-disk, a different
+    payload shape hitting the same /execute endpoint), and _execute() (which
+    further unwraps just "result").
+    """
     client = get_http_client()
-    payload: dict[str, Any] = {"script": script}
-    if args is not None:
-        payload["args"] = args
     try:
         response = await client.post("/execute", json=payload)
         check_response(response)
@@ -48,6 +51,25 @@ async def _execute(script: str, args: dict[str, Any] | None = None) -> Any:
         if output_lines:
             detail += "\n\nCaptured output:\n" + "\n".join(output_lines)
         raise ToolError(detail)
+    return data
+
+
+async def _execute_raw(script: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+    """POST an inline DazScript to DazScriptServer; raise ToolError on failure.
+
+    Returns the full response payload (success/result/output/error) — used by
+    both _execute() (which unwraps just "result") and daz_execute (the public
+    MCP tool, which returns the full diagnostic payload to the caller).
+    """
+    payload: dict[str, Any] = {"script": script}
+    if args is not None:
+        payload["args"] = args
+    return await _execute_payload(payload)
+
+
+async def _execute(script: str, args: dict[str, Any] | None = None) -> Any:
+    """POST an inline DazScript to DazScriptServer; raise ToolError on failure."""
+    data = await _execute_raw(script, args)
     return data.get("result")
 
 

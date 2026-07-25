@@ -8,109 +8,7 @@ from typing import Any
 from fastmcp.exceptions import ToolError
 
 from .._mcp import mcp, _execute_by_id
-
-
-# ---------------------------------------------------------------------------
-# Emotion definitions (shared with daz_time_expression / daz_sync_character_beats)
-# ---------------------------------------------------------------------------
-
-_EMOTION_DEFINITIONS: dict[str, dict] = {
-    "happy": {
-        "morphs": [
-            {"names": ["PHMSmile", "Smile", "CTRLSmile", "MouthSmile", "SmileSimple"], "value": 0.85},
-            {"names": ["PHMEyesSquint", "EyesSquint", "EyeSquintL", "SquintEyes"], "value": 0.25},
-        ],
-        "body": [{"bone": "chestUpper", "property": "XRotate", "value": 3.0}],
-    },
-    "sad": {
-        "morphs": [
-            {"names": ["PHMFrown", "Frown", "MouthFrown", "CTRLFrown", "FrownSimple"], "value": 0.75},
-            {"names": ["PHMBrowInnerDown", "BrowDownL", "BrowDown", "CTRLBrowDown", "BrowInnerDown"], "value": 0.6},
-            {"names": ["PHMEyesSquint", "EyesSquint", "EyeSquintL"], "value": 0.3},
-        ],
-        "body": [{"bone": "chestUpper", "property": "XRotate", "value": -6.0}],
-    },
-    "angry": {
-        "morphs": [
-            {"names": ["PHMFrown", "Frown", "MouthFrown", "CTRLFrown"], "value": 0.5},
-            {"names": ["PHMBrowDown", "BrowDown", "BrowDownLeft", "CTRLBrowDown", "BrowDownR"], "value": 0.85},
-            {"names": ["PHMNoseWrinkle", "NoseWrinkle", "NoseSneerL", "NoseSneer"], "value": 0.4},
-            {"names": ["PHMEyesTighten", "EyesTighten", "EyeSquintL", "CheekSquintL"], "value": 0.4},
-        ],
-        "body": [{"bone": "chestUpper", "property": "XRotate", "value": -3.0}],
-    },
-    "surprised": {
-        "morphs": [
-            {"names": ["PHMBrowUp", "BrowUp", "BrowInnerUpL", "CTRLBrowUp", "BrowsUp"], "value": 0.85},
-            {"names": ["PHMEyesWide", "EyesWide", "EyeOpenL", "EyeWideL"], "value": 0.75},
-            {"names": ["PHMMouthOpen", "MouthOpen", "CTRLMouthOpen", "JawOpen"], "value": 0.6},
-        ],
-        "body": [],
-    },
-    "fearful": {
-        "morphs": [
-            {"names": ["PHMBrowUp", "BrowUp", "BrowInnerUpL", "CTRLBrowUp"], "value": 0.7},
-            {"names": ["PHMEyesWide", "EyesWide", "EyeOpenL", "EyeWideL"], "value": 0.6},
-            {"names": ["PHMMouthOpen", "MouthOpen", "CTRLMouthOpen", "JawOpen"], "value": 0.3},
-        ],
-        "body": [{"bone": "chestUpper", "property": "XRotate", "value": -4.0}],
-    },
-    "disgusted": {
-        "morphs": [
-            {"names": ["PHMNoseWrinkle", "NoseWrinkle", "NoseSneerL", "NoseSneer"], "value": 0.75},
-            {"names": ["PHMFrown", "Frown", "MouthFrown", "CTRLFrown"], "value": 0.4},
-            {"names": ["PHMUpperLipUp", "UpperLipUp", "MouthUpperUp_L", "LipUpperUp_L"], "value": 0.3},
-        ],
-        "body": [],
-    },
-    "neutral": {
-        "morphs": [],
-        "body": [],
-    },
-    "excited": {
-        "morphs": [
-            {"names": ["PHMSmile", "Smile", "CTRLSmile", "MouthSmile"], "value": 1.0},
-            {"names": ["PHMBrowUp", "BrowUp", "CTRLBrowUp", "BrowsUp"], "value": 0.5},
-            {"names": ["PHMEyesWide", "EyesWide", "EyeOpenL"], "value": 0.4},
-            {"names": ["PHMMouthOpen", "MouthOpen", "CTRLMouthOpen", "JawOpen"], "value": 0.4},
-        ],
-        "body": [{"bone": "chestUpper", "property": "XRotate", "value": 5.0}],
-    },
-    "bored": {
-        "morphs": [
-            {"names": ["PHMEyesClosed", "EyesClosed", "EyeClosedL", "CTRLEyesClosed"], "value": 0.4},
-            {"names": ["PHMFrown", "Frown", "MouthFrown"], "value": 0.2},
-        ],
-        "body": [{"bone": "chestUpper", "property": "XRotate", "value": -4.0}],
-    },
-    "confident": {
-        "morphs": [
-            {"names": ["PHMSmile", "Smile", "MouthSmile", "CTRLSmile"], "value": 0.3},
-        ],
-        "body": [{"bone": "chestUpper", "property": "XRotate", "value": 4.0}],
-    },
-    "shy": {
-        "morphs": [
-            {"names": ["PHMSmile", "Smile", "MouthSmile"], "value": 0.2},
-            {"names": ["PHMEyesSquint", "EyesSquint", "EyeSquintL"], "value": 0.15},
-        ],
-        "body": [{"bone": "chestUpper", "property": "XRotate", "value": -5.0}],
-    },
-    "loving": {
-        "morphs": [
-            {"names": ["PHMSmile", "Smile", "MouthSmile", "CTRLSmile"], "value": 0.6},
-            {"names": ["PHMEyesSquint", "EyesSquint", "EyeSquintL"], "value": 0.35},
-        ],
-        "body": [{"bone": "chestUpper", "property": "XRotate", "value": 2.0}],
-    },
-    "contemptuous": {
-        "morphs": [
-            {"names": ["PHMSmileR", "SmileR", "MouthSmileR", "MouthSmile_R"], "value": 0.5},
-            {"names": ["PHMFrownL", "FrownL", "MouthFrownL", "MouthFrown_L"], "value": 0.3},
-        ],
-        "body": [],
-    },
-}
+from .._emotions import _EMOTION_DEFINITIONS
 
 _VALID_SHOT_TYPES = frozenset({
     "extreme-close-up", "close-up", "medium-close-up", "medium-shot",
@@ -400,7 +298,8 @@ async def daz_create_scene(
 
     Returns:
         Dict with:
-        - sceneType: Detected scene type ("dining", "interview", "portrait", "conversation", "generic")
+        - sceneType: Detected scene type ("dining", "interview", "portrait", "conversation",
+          "generic")
         - description: Original description
         - charactersUsed: Number of characters processed
         - actions: List of actions performed (what was set up)
@@ -1093,7 +992,9 @@ async def daz_choreograph_action(
     if len(characters) == 1:
         return {"actionType": action_type, "characters": characters, "positions": [],
                 "frameRange": {"start": start_frame, "end": start_frame + duration},
-                "suggestions": ["Add a second character to the scene to choreograph a " + action_type]}
+                "suggestions": [
+                    "Add a second character to the scene to choreograph a " + action_type
+                ]}
 
     # Validate frame range
     if start_frame < 0:
@@ -1506,7 +1407,9 @@ async def daz_create_light_sequence(
         - Use daz_render_animation to export the animated sequence
         - "romantic" candle uses random flicker — values will differ each call
     """
-    if sequence_type not in ("day-to-night", "night-to-dawn", "interrogation", "romantic", "action-tension"):
+    if sequence_type not in (
+        "day-to-night", "night-to-dawn", "interrogation", "romantic", "action-tension"
+    ):
         raise ToolError(
             f"Invalid sequence_type '{sequence_type}'. "
             "Valid: day-to-night, night-to-dawn, interrogation, romantic, action-tension"

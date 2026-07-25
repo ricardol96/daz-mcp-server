@@ -72,3 +72,17 @@ disable = ["broad-exception-caught"]
 # missing-*-docstring is left enabled: whether to write the ~491 missing
 # docstrings or suppress the check is a real team decision, not a false
 # positive to tune away (tracked in daz-mcp-server-dk7).
+
+[tool.pylint.similarities]
+# Rationale (daz-mcp-server-cw8): with pylint's default of 4, duplicate-code
+# (R0801) mostly flagged the `try: return await run_dazpy(_run) except
+# ToolError: raise except Exception as e: handle_dazpy_error(e)` wrapper
+# repeated across nearly every dazpy-routed tool in tools/*.py -- an
+# intentional, structurally-necessary pattern, not accidental duplication.
+# Raised past that boilerplate's length (verified: eliminates 11 of 12
+# remaining pairs after two genuine duplications -- _EMOTION_DEFINITIONS and
+# the _execute/daz_execute payload+error-handling logic -- were extracted
+# into shared code). The one pair still above this threshold
+# (conftest.py vs test_phase5_integration.py's fixtures) is deliberate
+# per SKILL_DEVELOPMENT.md and carries its own inline disable + rationale.
+min-similarity-lines = 8
