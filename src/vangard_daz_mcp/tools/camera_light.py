@@ -451,7 +451,9 @@ async def daz_list_lights() -> dict[str, Any]:
         lights = scene.lights()
         result = []
         for light in lights:
-            name = light._identifier.value
+            name = light._identifier.value  # pylint: disable=protected-access
+            # ._identifier.value is dazpy's documented way to read a node's
+            # internal name (see daz-script-server's own README examples).
             info: dict[str, Any] = {"name": name}
             # label makes one HTTP call per light
             try:
@@ -559,7 +561,7 @@ async def daz_list_cameras() -> dict[str, Any]:
         cameras = scene.cameras()
         result = []
         for camera in cameras:
-            name = camera._identifier.value
+            name = camera._identifier.value  # pylint: disable=protected-access
             info: dict[str, Any] = {"name": name}
             try:
                 info["label"] = camera.label or name

@@ -238,7 +238,7 @@ async def daz_list_children(node_label: str) -> dict[str, Any]:
         node = scene.find_node_by_label(node_label)
         children = node.children
         items = [
-            {"name": child._identifier.value, "label": child.label}
+            {"name": child._identifier.value, "label": child.label}  # pylint: disable=protected-access
             for child in children
         ]
         return {"node": node_label, "children": items, "count": len(items)}
@@ -292,10 +292,11 @@ async def daz_get_parent(node_label: str) -> dict[str, Any]:
         return {
             "node": node_label,
             "parent": {
-                "name": parent._identifier.value,  # pylint: disable=no-member
+                "name": parent._identifier.value,  # pylint: disable=no-member,protected-access
                 # astroid can't narrow `parent`'s type past the None-check above;
-                # ._identifier.value is the same DazNode access used identically
-                # (and uncomplained-about) elsewhere in this file and camera_light.py.
+                # ._identifier.value is dazpy's documented way to read a node's
+                # internal name (see daz-script-server's own README examples) —
+                # used identically elsewhere in this file and camera_light.py.
                 "label": parent.label,
             },
         }
@@ -333,7 +334,7 @@ async def daz_get_selected_nodes() -> dict[str, Any]:
         scene = get_scene()
         nodes = scene.selected_nodes()
         items = [
-            {"name": n._identifier.value, "label": n.label}
+            {"name": n._identifier.value, "label": n.label}  # pylint: disable=protected-access
             for n in nodes
         ]
         return {"count": len(items), "nodes": items}
