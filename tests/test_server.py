@@ -1,12 +1,15 @@
 """Tests for vangard-daz-mcp server tools."""
 
+from unittest.mock import MagicMock
+
 import pytest
 import pytest_asyncio
 import respx
 import httpx
+import dazpy.exceptions as daz_exc
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp._client import set_http_client
+from vangard_daz_mcp._client import set_http_client, set_scene
 from vangard_daz_mcp._registry import _register_scripts
 from vangard_daz_mcp.tools.render import (
     daz_render,
@@ -46,6 +49,23 @@ async def http_client():
         set_http_client(client)
         yield client
     set_http_client(None)
+
+
+@pytest.fixture(autouse=True)
+def mock_scene():
+    """Replace the dazpy DazScene singleton with a MagicMock.
+
+    Tools that go through get_scene()/run_dazpy() (e.g. daz_load_file with
+    merge=True, daz_save_scene_copy) use a separate connection from the httpx
+    client that respx mocks. Without this, those calls silently fall through
+    to a real DazClient and can reach a live, shared DAZ Studio instance —
+    do not remove this without giving every dazpy-routed tool an explicit
+    mock in its own test.
+    """
+    scene = MagicMock()
+    set_scene(scene)
+    yield scene
+    set_scene(None)
 
 
 @pytest.fixture
@@ -288,11 +308,10 @@ async def test_daz_render_with_output_path(mock_daz):
 # daz_load_file
 # ---------------------------------------------------------------------------
 
-async def test_daz_load_file_merge(mock_daz):
-    mock_daz.post("/scripts/vangard-load-file/execute").mock(
-        return_value=_ok({"success": True, "file": "C:/scenes/char.duf"})
-    )
+async def test_daz_load_file_merge(mock_scene):
+    """merge=True (default) routes through get_scene().load(), not the script registry."""
     result = await daz_load_file("C:/scenes/char.duf")
+    mock_scene.load.assert_called_once_with("C:/scenes/char.duf")
     assert result["success"] is True
     assert result["file"] == "C:/scenes/char.duf"
 
@@ -305,8 +324,9 @@ async def test_daz_load_file_replace(mock_daz):
     assert result["success"] is True
 
 
-async def test_daz_load_file_not_found(mock_daz):
-    mock_daz.post("/scripts/vangard-load-file/execute").mock(return_value=_fail("File not found: C:/missing.duf"))
+async def test_daz_load_file_not_found(mock_scene):
+    """merge=True: get_scene().load() raising a dazpy ScriptRuntimeError becomes a ToolError."""
+    mock_scene.load.side_effect = daz_exc.ScriptRuntimeError("File not found: C:/missing.duf")
     with pytest.raises(ToolError, match="File not found"):
         await daz_load_file("C:/missing.duf")
 
@@ -815,24 +835,18 @@ async def test_daz_wait_for_request_timeout(mock_daz):
 
 
 # ---------------------------------------------------------------------------
-# daz_save_scene_copy — uses POST /scene/save-copy directly (not script registry)
+# daz_save_scene_copy — routes through get_scene().save_copy(), not the
+# script registry or the httpx client directly (dazpy's DazScene wraps
+# POST /scene/save-copy over its own connection).
 # ---------------------------------------------------------------------------
 
-def _save_copy_response(path, source, method="file-copy"):
-    return httpx.Response(
-        200,
-        json={"ok": True, "path": path, "source": source, "method": method},
-    )
-
-
-async def test_daz_save_scene_copy_ok(mock_daz):
-    mock_daz.post("/scene/save-copy").mock(
-        return_value=_save_copy_response(
-            "C:/backups/hero_v02.duf",
-            "C:/scenes/hero.duf",
-            "file-copy",
-        )
-    )
+async def test_daz_save_scene_copy_ok(mock_scene):
+    mock_scene.save_copy.return_value = {
+        "ok": True,
+        "path": "C:/backups/hero_v02.duf",
+        "source": "C:/scenes/hero.duf",
+        "method": "file-copy",
+    }
     result = await daz_save_scene_copy("C:/backups/hero_v02.duf")
     assert result["ok"] is True
     assert result["path"] == "C:/backups/hero_v02.duf"
@@ -840,38 +854,33 @@ async def test_daz_save_scene_copy_ok(mock_daz):
     assert result["method"] == "file-copy"
 
 
-async def test_daz_save_scene_copy_sends_correct_body(mock_daz):
-    captured = {}
-
-    def capture(request):
-        captured.update(__import__("json").loads(request.content))
-        return _save_copy_response("C:/out/copy.duf", "C:/scenes/orig.duf", "file-copy")
-
-    mock_daz.post("/scene/save-copy").mock(side_effect=capture)
+async def test_daz_save_scene_copy_sends_correct_path(mock_scene):
+    mock_scene.save_copy.return_value = {
+        "ok": True, "path": "C:/out/copy.duf", "source": "C:/scenes/orig.duf", "method": "file-copy",
+    }
     await daz_save_scene_copy("C:/out/copy.duf")
-    assert captured == {"path": "C:/out/copy.duf"}
+    mock_scene.save_copy.assert_called_once_with("C:/out/copy.duf")
 
 
-async def test_daz_save_scene_copy_dirty_scene(mock_daz):
-    mock_daz.post("/scene/save-copy").mock(
-        return_value=_save_copy_response(
-            "C:/backups/dirty.duf",
-            "C:/scenes/active.duf",
-            "save-restore",
-        )
-    )
+async def test_daz_save_scene_copy_dirty_scene(mock_scene):
+    mock_scene.save_copy.return_value = {
+        "ok": True,
+        "path": "C:/backups/dirty.duf",
+        "source": "C:/scenes/active.duf",
+        "method": "save-restore",
+    }
     result = await daz_save_scene_copy("C:/backups/dirty.duf")
     assert result["method"] == "save-restore"
 
 
-async def test_daz_save_scene_copy_connect_error(mock_daz):
-    mock_daz.post("/scene/save-copy").mock(side_effect=httpx.ConnectError("refused"))
+async def test_daz_save_scene_copy_connect_error(mock_scene):
+    mock_scene.save_copy.side_effect = daz_exc.ConnectionError("refused")
     with pytest.raises(ToolError, match="DAZ Studio is running"):
         await daz_save_scene_copy("C:/backups/hero.duf")
 
 
-async def test_daz_save_scene_copy_does_not_use_script_registry(mock_daz):
-    """Verify the tool calls /scene/save-copy and never hits the script registry."""
+async def test_daz_save_scene_copy_does_not_use_script_registry(mock_daz, mock_scene):
+    """Verify the tool calls get_scene().save_copy() and never hits the script registry."""
     registry_called = False
 
     def fail_if_registry(request):
@@ -880,9 +889,9 @@ async def test_daz_save_scene_copy_does_not_use_script_registry(mock_daz):
         return httpx.Response(200, json={})
 
     mock_daz.post("/scripts/vangard-save-scene/execute").mock(side_effect=fail_if_registry)
-    mock_daz.post("/scene/save-copy").mock(
-        return_value=_save_copy_response("C:/out.duf", "C:/src.duf")
-    )
+    mock_scene.save_copy.return_value = {
+        "ok": True, "path": "C:/out.duf", "source": "C:/src.duf", "method": "file-copy",
+    }
     await daz_save_scene_copy("C:/out.duf")
     assert not registry_called, "daz_save_scene_copy must not use the script registry"
 
