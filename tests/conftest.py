@@ -27,14 +27,11 @@ import httpx
 import pytest
 import pytest_asyncio
 
-import vangard_daz_mcp.server as server_module
-from vangard_daz_mcp.server import (
-    _register_scripts,
-    daz_create_camera,
-    daz_create_light,
-    daz_delete_node,
-    daz_scene_info,
-)
+from vangard_daz_mcp._client import set_http_client
+from vangard_daz_mcp._registry import _register_scripts
+from vangard_daz_mcp.tools.camera_light import daz_create_camera, daz_create_light
+from vangard_daz_mcp.tools.scene import daz_scene_info
+from vangard_daz_mcp.tools.transform import daz_delete_node
 
 BASE_URL = "http://localhost:18811"
 
@@ -67,13 +64,13 @@ async def live_client():
         pytest.skip(f"DAZ Studio not reachable at {BASE_URL}")
 
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
-        server_module._http_client = client
+        set_http_client(client)
         if not _cache.get("scripts_registered"):
             await _register_scripts(client)
             _cache["scripts_registered"] = True
         yield client
 
-    server_module._http_client = None
+    set_http_client(None)
 
 
 # ---------------------------------------------------------------------------

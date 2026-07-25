@@ -6,18 +6,10 @@ import respx
 import httpx
 from fastmcp.exceptions import ToolError
 
-import vangard_daz_mcp.server as server_module
-from vangard_daz_mcp.server import (
-    daz_status,
-    daz_execute,
-    daz_execute_file,
-    daz_scene_info,
-    daz_get_node,
-    daz_set_property,
+from vangard_daz_mcp._client import set_http_client
+from vangard_daz_mcp._registry import _register_scripts
+from vangard_daz_mcp.tools.render import (
     daz_render,
-    daz_load_file,
-    _register_scripts,
-    # Phase 1.5 async tools
     daz_render_async,
     daz_render_with_camera_async,
     daz_batch_render_cameras_async,
@@ -29,7 +21,13 @@ from vangard_daz_mcp.server import (
     daz_list_requests,
     daz_set_render_quality,
     daz_wait_for_request,
-    daz_save_scene_copy,
+)
+from vangard_daz_mcp.tools.scene import daz_scene_info, daz_load_file, daz_save_scene_copy
+from vangard_daz_mcp.tools.transform import daz_get_node, daz_set_property
+from vangard_daz_mcp.tools.utility import (
+    daz_status,
+    daz_execute,
+    daz_execute_file,
     daz_wait_for_scene_event,
 )
 
@@ -45,9 +43,9 @@ BASE_URL = "http://localhost:18811"
 async def http_client():
     """Provide a real AsyncClient (respx patches its transport per test)."""
     async with httpx.AsyncClient(base_url=BASE_URL) as client:
-        server_module._http_client = client
+        set_http_client(client)
         yield client
-    server_module._http_client = None
+    set_http_client(None)
 
 
 @pytest.fixture

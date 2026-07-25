@@ -292,7 +292,10 @@ async def daz_get_parent(node_label: str) -> dict[str, Any]:
         return {
             "node": node_label,
             "parent": {
-                "name": parent._identifier.value,
+                "name": parent._identifier.value,  # pylint: disable=no-member
+                # astroid can't narrow `parent`'s type past the None-check above;
+                # ._identifier.value is the same DazNode access used identically
+                # (and uncomplained-about) elsewhere in this file and camera_light.py.
                 "label": parent.label,
             },
         }

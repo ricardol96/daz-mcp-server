@@ -18,11 +18,10 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp.server import (
+from vangard_daz_mcp.tools.cinematic import daz_export_node_config, daz_import_node_config
+from vangard_daz_mcp.tools.content import (
     daz_browse_category,
-    daz_export_node_config,
     daz_get_content_info,
-    daz_import_node_config,
     daz_list_categories,
 )
 

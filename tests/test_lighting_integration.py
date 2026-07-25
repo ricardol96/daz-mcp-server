@@ -18,16 +18,15 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp.server import (
+from vangard_daz_mcp.tools.animation import daz_clear_animation
+from vangard_daz_mcp.tools.camera_light import daz_apply_lighting_preset, daz_list_lights
+from vangard_daz_mcp.tools.cinematic import (
     daz_animate_light,
-    daz_apply_lighting_preset,
     daz_apply_visual_style,
-    daz_clear_animation,
     daz_create_light_sequence,
-    daz_delete_node,
-    daz_list_lights,
     daz_set_scene_atmosphere,
 )
+from vangard_daz_mcp.tools.transform import daz_delete_node
 
 
 # ---------------------------------------------------------------------------

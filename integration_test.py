@@ -22,12 +22,59 @@ from typing import Any
 
 import httpx
 
-# ---------------------------------------------------------------------------
-# Bootstrap: add src/ to path so we can import the server module directly
-# ---------------------------------------------------------------------------
-
-sys.path.insert(0, "src")
-import vangard_daz_mcp.server as server  # noqa: E402 (after path manipulation)
+from vangard_daz_mcp.tools.animation import (
+    daz_get_animation_info,
+    daz_set_frame,
+    daz_set_frame_range,
+)
+from vangard_daz_mcp.tools.camera_light import (
+    daz_apply_camera_angle,
+    daz_apply_composition_rule,
+    daz_apply_lighting_preset,
+    daz_frame_camera_to_node,
+    daz_frame_shot,
+    daz_load_camera_preset,
+    daz_orbit_camera_around,
+    daz_save_camera_preset,
+    daz_set_active_camera,
+)
+from vangard_daz_mcp.tools.content import daz_browse_category, daz_list_categories
+from vangard_daz_mcp.tools.morph import daz_list_morphs, daz_search_morphs, daz_set_emotion
+from vangard_daz_mcp.tools.render import (
+    daz_get_render_settings,
+    daz_get_request_status,
+    daz_list_requests,
+    daz_set_render_quality,
+)
+from vangard_daz_mcp.tools.scene import (
+    daz_get_node_hierarchy,
+    daz_list_checkpoints,
+    daz_list_children,
+    daz_restore_scene_state,
+    daz_save_scene_state,
+    daz_scene_info,
+)
+from vangard_daz_mcp.tools.spatial import (
+    daz_calculate_distance,
+    daz_check_overlap,
+    daz_find_nearby_nodes,
+    daz_get_bounding_box,
+    daz_get_scene_layout,
+    daz_get_spatial_relationship,
+    daz_get_world_position,
+)
+from vangard_daz_mcp.tools.transform import daz_batch_select, daz_batch_visibility, daz_get_node
+from vangard_daz_mcp.tools.utility import (
+    daz_batch_set_properties,
+    daz_execute,
+    daz_get_property_metadata,
+    daz_inspect_properties,
+    daz_status,
+    daz_validate_scene,
+    daz_validate_script,
+)
+from vangard_daz_mcp._client import DAZ_API_TOKEN, DAZ_TIMEOUT, set_http_client
+from vangard_daz_mcp._registry import _REGISTRY, _register_scripts
 
 
 # ---------------------------------------------------------------------------
@@ -136,14 +183,14 @@ async def init_server(base_url: str, token: str) -> httpx.AsyncClient:
     """Create shared HTTP client and register all scripts."""
     print("\n\033[1mServer initialisation\033[0m")
     headers = {"X-API-Token": token} if token else {}
-    client = httpx.AsyncClient(base_url=base_url, timeout=server.DAZ_TIMEOUT, headers=headers)
-    server._http_client = client
+    client = httpx.AsyncClient(base_url=base_url, timeout=DAZ_TIMEOUT, headers=headers)
+    set_http_client(client)
 
     t0 = time.perf_counter()
     try:
-        await server._register_scripts(client)
+        await _register_scripts(client)
         elapsed = (time.perf_counter() - t0) * 1000
-        count = len(server._REGISTRY)
+        count = len(_REGISTRY)
         print(f"  \033[32m✓\033[0m  Registered {count} scripts  ({elapsed:.0f} ms)")
     except Exception as exc:
         print(f"  \033[31m✗\033[0m  Script registration failed: {exc}")
@@ -165,40 +212,40 @@ async def test_infrastructure(scene: dict) -> None:  # pylint: disable=unused-ar
     print(f"\n\033[1m[{cat}]\033[0m")
 
     await _run("daz_status", cat,
-               server.daz_status())
+               daz_status())
 
     await _run("daz_execute – simple IIFE", cat,
-               server.daz_execute("(function(){ return {ok: true}; })()"))
+               daz_execute("(function(){ return {ok: true}; })()"))
 
     await _run("daz_execute – App.applicationVersion", cat,
-               server.daz_execute("(function(){ return {ver: App.applicationVersion}; })()"))
+               daz_execute("(function(){ return {ver: App.applicationVersion}; })()"))
 
     await _run("daz_scene_info", cat,
-               server.daz_scene_info())
+               daz_scene_info())
 
     await _run("daz_get_animation_info", cat,
-               server.daz_get_animation_info())
+               daz_get_animation_info())
 
     await _run("daz_get_render_settings", cat,
-               server.daz_get_render_settings())
+               daz_get_render_settings())
 
     await _run("daz_validate_script – clean script", cat,
-               server.daz_validate_script("(function(){ var n = Scene.findNodeByLabel('x'); return n; })()"))
+               daz_validate_script("(function(){ var n = Scene.findNodeByLabel('x'); return n; })()"))
 
     await _run("daz_validate_script – known anti-pattern", cat,
-               server.daz_validate_script("var cam = new DzNewCameraAction(); cam.trigger();"))
+               daz_validate_script("var cam = new DzNewCameraAction(); cam.trigger();"))
 
     await _run("daz_list_requests", cat,
-               server.daz_list_requests())
+               daz_list_requests())
 
     await _run("daz_list_checkpoints (empty)", cat,
-               server.daz_list_checkpoints())
+               daz_list_checkpoints())
 
     await _run("daz_get_scene_layout – all types", cat,
-               server.daz_get_scene_layout())
+               daz_get_scene_layout())
 
     await _run("daz_get_scene_layout – figures + cameras only", cat,
-               server.daz_get_scene_layout(["figures", "cameras"]))
+               daz_get_scene_layout(["figures", "cameras"]))
 
 
 async def test_content_library() -> None:
@@ -207,13 +254,13 @@ async def test_content_library() -> None:
     print(f"\n\033[1m[{cat}]\033[0m")
 
     await _run("daz_list_categories – top level", cat,
-               server.daz_list_categories())
+               daz_list_categories())
 
     await _run("daz_list_categories – People subfolder", cat,
-               server.daz_list_categories("People"))
+               daz_list_categories("People"))
 
     await _run("daz_browse_category – People", cat,
-               server.daz_browse_category("People"))
+               daz_browse_category("People"))
 
 
 async def test_figure_tools(scene: dict) -> None:
@@ -227,51 +274,51 @@ async def test_figure_tools(scene: dict) -> None:
           + (f"(using figure: \033[36m{label}\033[0m)" if label else "\033[33m(no figures)\033[0m"))
 
     await _run("daz_get_node", cat,
-               server.daz_get_node(label) if label else _noop(),
+               daz_get_node(label) if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_get_world_position", cat,
-               server.daz_get_world_position(label) if label else _noop(),
+               daz_get_world_position(label) if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_get_bounding_box", cat,
-               server.daz_get_bounding_box(label) if label else _noop(),
+               daz_get_bounding_box(label) if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_get_node_hierarchy", cat,
-               server.daz_get_node_hierarchy(label, max_depth=2) if label else _noop(),
+               daz_get_node_hierarchy(label, max_depth=2) if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_list_children", cat,
-               server.daz_list_children(label) if label else _noop(),
+               daz_list_children(label) if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_inspect_properties – all", cat,
-               server.daz_inspect_properties(label) if label else _noop(),
+               daz_inspect_properties(label) if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_inspect_properties – transform only", cat,
-               server.daz_inspect_properties(label, "transform") if label else _noop(),
+               daz_inspect_properties(label, "transform") if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_get_property_metadata – XTranslate", cat,
-               server.daz_get_property_metadata(label, "XTranslate") if label else _noop(),
+               daz_get_property_metadata(label, "XTranslate") if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_list_morphs – active only", cat,
-               server.daz_list_morphs(label, include_zero=False) if label else _noop(),
+               daz_list_morphs(label, include_zero=False) if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_search_morphs – smile", cat,
-               server.daz_search_morphs(label, "smile") if label else _noop(),
+               daz_search_morphs(label, "smile") if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_set_emotion – happy (intensity 0.5)", cat,
-               server.daz_set_emotion(label, "happy", intensity=0.5) if label else _noop(),
+               daz_set_emotion(label, "happy", intensity=0.5) if label else _noop(),
                skip_if=no_fig)
 
     await _run("daz_set_emotion – neutral (reset)", cat,
-               server.daz_set_emotion(label, "neutral") if label else _noop(),
+               daz_set_emotion(label, "neutral") if label else _noop(),
                skip_if=no_fig)
 
     # Spatial: check distance to itself is 0
@@ -279,11 +326,11 @@ async def test_figure_tools(scene: dict) -> None:
         figs = [f["label"] for f in figures]
         if len(figs) >= 2:
             await _run("daz_calculate_distance – two figures", cat,
-                       server.daz_calculate_distance(figs[0], figs[1]))
+                       daz_calculate_distance(figs[0], figs[1]))
             await _run("daz_get_spatial_relationship", cat,
-                       server.daz_get_spatial_relationship(figs[0], figs[1]))
+                       daz_get_spatial_relationship(figs[0], figs[1]))
             await _run("daz_check_overlap", cat,
-                       server.daz_check_overlap(figs[0], figs[1]))
+                       daz_check_overlap(figs[0], figs[1]))
         else:
             _skip("daz_calculate_distance", cat, "need ≥2 figures")
             _skip("daz_get_spatial_relationship", cat, "need ≥2 figures")
@@ -294,7 +341,7 @@ async def test_figure_tools(scene: dict) -> None:
         _skip("daz_check_overlap", cat, no_fig)
 
     await _run("daz_find_nearby_nodes – r=500", cat,
-               server.daz_find_nearby_nodes(label, radius=500) if label else _noop(),
+               daz_find_nearby_nodes(label, radius=500) if label else _noop(),
                skip_if=no_fig)
 
 
@@ -313,51 +360,51 @@ async def test_camera_tools(scene: dict) -> None:
              if cam else "\033[33m(no cameras)\033[0m"))
 
     await _run("daz_set_active_camera", cat,
-               server.daz_set_active_camera(cam) if cam else _noop(),
+               daz_set_active_camera(cam) if cam else _noop(),
                skip_if=no_cam)
 
     await _run("daz_save_camera_preset", cat,
-               server.daz_save_camera_preset(cam) if cam else _noop(),
+               daz_save_camera_preset(cam) if cam else _noop(),
                skip_if=no_cam)
 
     await _run("daz_frame_shot – medium-close-up", cat,
-               server.daz_frame_shot(cam, fig, "medium-close-up") if (cam and fig) else _noop(),
+               daz_frame_shot(cam, fig, "medium-close-up") if (cam and fig) else _noop(),
                skip_if=no_cam_fig)
 
     await _run("daz_frame_shot – full-shot", cat,
-               server.daz_frame_shot(cam, fig, "full-shot") if (cam and fig) else _noop(),
+               daz_frame_shot(cam, fig, "full-shot") if (cam and fig) else _noop(),
                skip_if=no_cam_fig)
 
     await _run("daz_apply_camera_angle – eye-level", cat,
-               server.daz_apply_camera_angle(cam, fig, "eye-level") if (cam and fig) else _noop(),
+               daz_apply_camera_angle(cam, fig, "eye-level") if (cam and fig) else _noop(),
                skip_if=no_cam_fig)
 
     await _run("daz_apply_camera_angle – low-angle", cat,
-               server.daz_apply_camera_angle(cam, fig, "low-angle") if (cam and fig) else _noop(),
+               daz_apply_camera_angle(cam, fig, "low-angle") if (cam and fig) else _noop(),
                skip_if=no_cam_fig)
 
     await _run("daz_apply_composition_rule – rule-of-thirds", cat,
-               server.daz_apply_composition_rule(cam, fig, "rule-of-thirds") if (cam and fig) else _noop(),
+               daz_apply_composition_rule(cam, fig, "rule-of-thirds") if (cam and fig) else _noop(),
                skip_if=no_cam_fig)
 
     await _run("daz_apply_composition_rule – golden-ratio", cat,
-               server.daz_apply_composition_rule(cam, fig, "golden-ratio") if (cam and fig) else _noop(),
+               daz_apply_composition_rule(cam, fig, "golden-ratio") if (cam and fig) else _noop(),
                skip_if=no_cam_fig)
 
     await _run("daz_orbit_camera_around – 45°", cat,
-               server.daz_orbit_camera_around(cam, fig, 250, 45, 15) if (cam and fig) else _noop(),
+               daz_orbit_camera_around(cam, fig, 250, 45, 15) if (cam and fig) else _noop(),
                skip_if=no_cam_fig)
 
     await _run("daz_frame_camera_to_node", cat,
-               server.daz_frame_camera_to_node(cam, fig) if (cam and fig) else _noop(),
+               daz_frame_camera_to_node(cam, fig) if (cam and fig) else _noop(),
                skip_if=no_cam_fig)
 
     if cam:
         preset_result = await _run("daz_save_camera_preset (for load test)", cat,
-                                   server.daz_save_camera_preset(cam))
+                                   daz_save_camera_preset(cam))
         if preset_result and "preset" in preset_result:
             await _run("daz_load_camera_preset", cat,
-                       server.daz_load_camera_preset(cam, preset_result["preset"]))
+                       daz_load_camera_preset(cam, preset_result["preset"]))
         else:
             _skip("daz_load_camera_preset", cat, "save_camera_preset did not return preset data")
     else:
@@ -374,15 +421,15 @@ async def test_lighting_tools(scene: dict) -> None:
     print(f"\n\033[1m[{cat}]\033[0m")
 
     await _run("daz_apply_lighting_preset – three-point", cat,
-               server.daz_apply_lighting_preset("three-point", fig) if fig else _noop(),
+               daz_apply_lighting_preset("three-point", fig) if fig else _noop(),
                skip_if=no_fig)
 
     await _run("daz_apply_lighting_preset – rembrandt", cat,
-               server.daz_apply_lighting_preset("rembrandt", fig) if fig else _noop(),
+               daz_apply_lighting_preset("rembrandt", fig) if fig else _noop(),
                skip_if=no_fig)
 
     await _run("daz_validate_scene", cat,
-               server.daz_validate_scene())
+               daz_validate_scene())
 
 
 async def test_checkpoint_system(scene: dict) -> None:  # pylint: disable=unused-argument
@@ -394,16 +441,16 @@ async def test_checkpoint_system(scene: dict) -> None:  # pylint: disable=unused
     print(f"\n\033[1m[{cat}]\033[0m")
 
     await _run("daz_list_checkpoints – before save", cat,
-               server.daz_list_checkpoints())
+               daz_list_checkpoints())
 
     await _run("daz_save_scene_state – 'integration_test'", cat,
-               server.daz_save_scene_state("integration_test"))
+               daz_save_scene_state("integration_test"))
 
     await _run("daz_list_checkpoints – after save", cat,
-               server.daz_list_checkpoints())
+               daz_list_checkpoints())
 
     await _run("daz_restore_scene_state – 'integration_test'", cat,
-               server.daz_restore_scene_state("integration_test"))
+               daz_restore_scene_state("integration_test"))
 
     # Confirm unknown name raises ToolError
     cat2 = cat
@@ -411,7 +458,7 @@ async def test_checkpoint_system(scene: dict) -> None:  # pylint: disable=unused
     from fastmcp.exceptions import ToolError
     t0 = time.perf_counter()
     try:
-        await server.daz_restore_scene_state("__nonexistent__")
+        await daz_restore_scene_state("__nonexistent__")
         elapsed = (time.perf_counter() - t0) * 1000
         _fail(name, cat2, "Expected ToolError but no exception was raised", elapsed)
     except ToolError:
@@ -428,16 +475,16 @@ async def test_animation_tools() -> None:
     print(f"\n\033[1m[{cat}]\033[0m")
 
     await _run("daz_get_animation_info", cat,
-               server.daz_get_animation_info())
+               daz_get_animation_info())
 
     await _run("daz_set_frame – frame 0", cat,
-               server.daz_set_frame(0))
+               daz_set_frame(0))
 
     await _run("daz_set_frame_range – 0 to 29", cat,
-               server.daz_set_frame_range(0, 29))
+               daz_set_frame_range(0, 29))
 
     await _run("daz_get_animation_info – after range set", cat,
-               server.daz_get_animation_info())
+               daz_get_animation_info())
 
 
 async def test_batch_tools(scene: dict) -> None:
@@ -451,17 +498,17 @@ async def test_batch_tools(scene: dict) -> None:
 
     # batch_set_properties: set XTranslate to its current value (no-op effectively)
     await _run("daz_batch_set_properties – single property", cat,
-               server.daz_batch_set_properties([
+               daz_batch_set_properties([
                    {"node_label": fig, "property_name": "XTranslate", "value": 0}
                ]) if fig else _noop(),
                skip_if=no_fig)
 
     await _run("daz_batch_visibility – hide+show", cat,
-               server.daz_batch_visibility([fig], visible=True) if fig else _noop(),
+               daz_batch_visibility([fig], visible=True) if fig else _noop(),
                skip_if=no_fig)
 
     await _run("daz_batch_select", cat,
-               server.daz_batch_select([fig]) if fig else _noop(),
+               daz_batch_select([fig]) if fig else _noop(),
                skip_if=no_fig)
 
 
@@ -471,17 +518,17 @@ async def test_async_render_tools() -> None:
     print(f"\n\033[1m[{cat}]\033[0m")
 
     await _run("daz_set_render_quality – draft", cat,
-               server.daz_set_render_quality("draft"))
+               daz_set_render_quality("draft"))
 
     await _run("daz_list_requests – empty", cat,
-               server.daz_list_requests())
+               daz_list_requests())
 
     # Test status on a made-up ID returns 404 → ToolError
     from fastmcp.exceptions import ToolError
     name = "daz_get_request_status – unknown id raises error"
     t0 = time.perf_counter()
     try:
-        await server.daz_get_request_status("nonexistent-id-xyz")
+        await daz_get_request_status("nonexistent-id-xyz")
         elapsed = (time.perf_counter() - t0) * 1000
         _fail(name, cat, "Expected ToolError but no exception raised", elapsed)
     except ToolError:
@@ -546,7 +593,7 @@ async def main(host: str, port: int, verbose: bool) -> int:
     _verbose = verbose
 
     base_url = f"http://{host}:{port}"
-    token = server.DAZ_API_TOKEN  # loaded from env / token file at import time
+    token = DAZ_API_TOKEN  # loaded from env / token file at import time
 
     print(f"\033[1mvangard-daz-mcp  integration tests\033[0m")
     print(f"Target: {base_url}")
@@ -564,7 +611,7 @@ async def main(host: str, port: int, verbose: bool) -> int:
         # 3. Get scene state once — used to drive conditional tests
         print("\n\033[1mInspecting scene\033[0m")
         try:
-            scene = await server.daz_scene_info()
+            scene = await daz_scene_info()
             figs = scene.get("figures", [])
             cams = scene.get("cameras", [])
             lights = scene.get("lights", [])
@@ -585,7 +632,7 @@ async def main(host: str, port: int, verbose: bool) -> int:
         await test_async_render_tools()
 
     finally:
-        server._http_client = None
+        set_http_client(None)
         await client.aclose()
 
     return print_summary()

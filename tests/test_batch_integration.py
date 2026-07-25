@@ -14,14 +14,14 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp.server import (
+from vangard_daz_mcp.tools.transform import (
     daz_batch_select,
-    daz_batch_set_properties,
     daz_batch_transform,
     daz_batch_visibility,
     daz_get_node,
     daz_set_property,
 )
+from vangard_daz_mcp.tools.utility import daz_batch_set_properties
 
 
 # ---------------------------------------------------------------------------

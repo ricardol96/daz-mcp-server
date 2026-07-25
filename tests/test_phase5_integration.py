@@ -23,29 +23,24 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-import vangard_daz_mcp.server as server_module
-from vangard_daz_mcp.server import (
-    # Core
-    _register_scripts,
-    daz_scene_info,
-    # Phase 5 tools under test
-    daz_list_materials,
-    daz_get_material,
-    daz_set_material_property,
-    daz_set_morph,
-    daz_delete_node,
+from vangard_daz_mcp._client import set_http_client
+from vangard_daz_mcp._registry import _register_scripts
+from vangard_daz_mcp.tools.camera_light import (
     daz_list_lights,
     daz_create_light,
     daz_list_cameras,
     daz_create_camera,
-    daz_save_scene,
-    daz_get_selected_nodes,
-    daz_set_render_output,
-    daz_reset_pose,
-    # Helpers used for setup / teardown
-    daz_set_property,
-    daz_search_morphs,
 )
+from vangard_daz_mcp.tools.figure import daz_reset_pose
+from vangard_daz_mcp.tools.material import (
+    daz_list_materials,
+    daz_get_material,
+    daz_set_material_property,
+)
+from vangard_daz_mcp.tools.morph import daz_set_morph, daz_search_morphs
+from vangard_daz_mcp.tools.render import daz_set_render_output
+from vangard_daz_mcp.tools.scene import daz_scene_info, daz_save_scene, daz_get_selected_nodes
+from vangard_daz_mcp.tools.transform import daz_delete_node, daz_set_property
 
 BASE_URL = "http://localhost:18811"
 
@@ -81,7 +76,7 @@ async def live_client():
         pytest.skip(f"DAZ Studio not reachable at {BASE_URL}")
 
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
-        server_module._http_client = client
+        set_http_client(client)
 
         # Register scripts once per process (cached flag).
         if not _cache.get("scripts_registered"):
@@ -90,7 +85,7 @@ async def live_client():
 
         yield client
 
-    server_module._http_client = None
+    set_http_client(None)
 
 
 # ---------------------------------------------------------------------------

@@ -16,17 +16,17 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp.server import (
+from vangard_daz_mcp.tools.animation import daz_clear_animation
+from vangard_daz_mcp.tools.camera_light import daz_list_cameras
+from vangard_daz_mcp.tools.cinematic import (
     daz_animate_conversation,
     daz_arrange_characters,
     daz_choreograph_action,
-    daz_clear_animation,
     daz_create_character_path,
     daz_create_scene,
     daz_create_shot_sequence,
-    daz_delete_node,
-    daz_list_cameras,
 )
+from vangard_daz_mcp.tools.transform import daz_delete_node
 
 
 # ---------------------------------------------------------------------------

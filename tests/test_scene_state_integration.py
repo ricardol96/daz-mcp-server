@@ -18,13 +18,15 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp.server import (
+from vangard_daz_mcp.tools.scene import (
     daz_list_checkpoints,
-    daz_list_macros,
-    daz_replay_macro,
     daz_restore_scene_state,
     daz_save_scene_state,
-    daz_set_property,
+)
+from vangard_daz_mcp.tools.transform import daz_set_property
+from vangard_daz_mcp.tools.utility import (
+    daz_list_macros,
+    daz_replay_macro,
     daz_start_recording,
     daz_stop_recording,
     daz_validate_scene,
