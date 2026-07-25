@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 from fastmcp.exceptions import ToolError
 
-from .._mcp import mcp, _execute, _execute_by_id, _execute_by_id_async
+from .._mcp import mcp, _execute_by_id
 from .._client import get_http_client
 from .._errors import handle_network_error, check_response
 

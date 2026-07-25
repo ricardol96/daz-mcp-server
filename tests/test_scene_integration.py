@@ -25,7 +25,7 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-from vangard_daz_mcp.tools.camera_light import daz_create_camera, daz_create_light
+from vangard_daz_mcp.tools.camera_light import daz_create_camera
 from vangard_daz_mcp.tools.scene import (
     daz_get_node_hierarchy,
     daz_get_parent,

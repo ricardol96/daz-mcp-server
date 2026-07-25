@@ -19,7 +19,6 @@ from ._client import (
     DAZ_TIMEOUT,
     get_http_client,
     set_http_client,
-    get_content_browser_client,
     set_content_browser_client,
 )
 from ._errors import handle_network_error, check_response

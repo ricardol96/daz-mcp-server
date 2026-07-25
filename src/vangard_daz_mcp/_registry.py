@@ -1,8 +1,6 @@
 """DazScript fragments and the script registry for DazScriptServer."""
 from __future__ import annotations
 
-from typing import Any
-
 import httpx
 
 

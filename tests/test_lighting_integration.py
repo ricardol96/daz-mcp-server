@@ -15,7 +15,6 @@ test_phase5_integration.py and used here only as helpers.
 from __future__ import annotations
 
 import pytest
-import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
 from vangard_daz_mcp.tools.animation import daz_clear_animation

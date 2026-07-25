@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any, Callable, TypeVar
+from typing import Callable, TypeVar
 
 import httpx
 from dazpy import DazClient, DazScene

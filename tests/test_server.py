@@ -10,7 +10,6 @@ import dazpy.exceptions as daz_exc
 from fastmcp.exceptions import ToolError
 
 from vangard_daz_mcp._client import set_http_client, set_scene
-from vangard_daz_mcp._registry import _register_scripts
 from vangard_daz_mcp.tools.render import (
     daz_render,
     daz_render_async,
