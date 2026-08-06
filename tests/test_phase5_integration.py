@@ -23,7 +23,7 @@ import pytest
 import pytest_asyncio
 from fastmcp.exceptions import ToolError
 
-import vangard_daz_mcp.server as server_module
+from vangard_daz_mcp._client import set_http_client
 from vangard_daz_mcp.server import (
     # Core
     _register_scripts,
@@ -81,7 +81,7 @@ async def live_client():
         pytest.skip(f"DAZ Studio not reachable at {BASE_URL}")
 
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
-        server_module._http_client = client
+        set_http_client(client)
 
         # Register scripts once per process (cached flag).
         if not _cache.get("scripts_registered"):
@@ -90,7 +90,7 @@ async def live_client():
 
         yield client
 
-    server_module._http_client = None
+    set_http_client(None)
 
 
 # ---------------------------------------------------------------------------

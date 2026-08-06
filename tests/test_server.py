@@ -6,7 +6,7 @@ import respx
 import httpx
 from fastmcp.exceptions import ToolError
 
-import vangard_daz_mcp.server as server_module
+from vangard_daz_mcp._client import set_http_client
 from vangard_daz_mcp.server import (
     daz_status,
     daz_execute,
@@ -45,9 +45,9 @@ BASE_URL = "http://localhost:18811"
 async def http_client():
     """Provide a real AsyncClient (respx patches its transport per test)."""
     async with httpx.AsyncClient(base_url=BASE_URL) as client:
-        server_module._http_client = client
+        set_http_client(client)
         yield client
-    server_module._http_client = None
+    set_http_client(None)
 
 
 @pytest.fixture

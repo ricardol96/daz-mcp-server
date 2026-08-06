@@ -6291,7 +6291,16 @@ _CREATE_CAMERA_SCRIPT = """\
 (function(){
     var args = getArguments()[0] || {};
     var cam = new DzBasicCamera();
-    cam.setLabel(args.label || "Camera");
+    var label = args.label || "Camera";
+    cam.setLabel(label);
+    // DAZ cameras need a unique internal name to be addressable
+    // via getName()/Scene.findNode(); derive one from the label.
+    var baseName = String(label).replace(/[^A-Za-z0-9_]/g, "_");
+    if (!baseName) baseName = "Camera";
+    var name = baseName;
+    var suffix = 1;
+    while (Scene.findNode(name)) { name = baseName + "_" + suffix; suffix++; }
+    cam.setName(name);
     Scene.addNode(cam);
     var xp = cam.findProperty("XTranslate");
     var yp = cam.findProperty("YTranslate");
@@ -6317,6 +6326,7 @@ _CREATE_CAMERA_SCRIPT = """\
     var pos = cam.getWSPos();
     var fl = cam.getFocalLengthControl();
     return {
+        name: cam.getName(),
         label: cam.getLabel(),
         position: { x: pos.x, y: pos.y, z: pos.z },
         focal_length: fl ? fl.getValue() : null
