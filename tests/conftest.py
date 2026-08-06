@@ -53,6 +53,11 @@ def _daz_available() -> bool:
         return False
 
 
+def _live_enabled() -> bool:
+    """Live-mutation tests are opt-in via DAZ_LIVE_TESTS=1."""
+    return os.environ.get("DAZ_LIVE_TESTS") == "1"
+
+
 # ---------------------------------------------------------------------------
 # Core connectivity fixture
 # ---------------------------------------------------------------------------
@@ -61,9 +66,13 @@ def _daz_available() -> bool:
 async def live_client():
     """Real AsyncClient wired into the server module.
 
-    Skips automatically if DAZ Studio is not reachable.
+    Skips automatically unless DAZ Studio is reachable AND the opt-in env var
+    ``DAZ_LIVE_TESTS=1`` is set. These tests mutate the live scene/disk, so
+    they must never run implicitly during a normal (e.g. CI) test run.
     Registers all scripts once per process (cached).
     """
+    if not _live_enabled():
+        pytest.skip("live-mutation tests require DAZ_LIVE_TESTS=1 (opt-in)")
     if not _daz_available():
         pytest.skip(f"DAZ Studio not reachable at {BASE_URL}")
 

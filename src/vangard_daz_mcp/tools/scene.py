@@ -8,11 +8,12 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
+import httpx
 from fastmcp.exceptions import ToolError
 
 from .._mcp import mcp, _execute_by_id
-from .._client import get_scene, run_dazpy
-from .._errors import handle_dazpy_error
+from .._client import get_http_client, get_scene, run_dazpy
+from .._errors import check_response, handle_dazpy_error, handle_network_error
 
 # ---------------------------------------------------------------------------
 # In-memory checkpoint store (cleared on server restart)
@@ -61,16 +62,10 @@ async def daz_load_file(
       - success: true on success
       - file: the path that was loaded
     """
-    if merge:
-        try:
-            await run_dazpy(lambda: get_scene().load(file_path))
-            return {"success": True, "file": file_path}
-        except ToolError:
-            raise
-        except Exception as e:
-            handle_dazpy_error(e)
-    # merge=False: replace mode — fall back to the registered DazScript
-    return await _execute_by_id("vangard-load-file", {"filePath": file_path, "merge": False})
+    return await _execute_by_id(
+        "vangard-load-file",
+        {"filePath": file_path, "merge": bool(merge)},
+    )
 
 
 @mcp.tool()
@@ -117,6 +112,14 @@ async def daz_save_scene(file_path: str | None = None) -> dict[str, Any]:
         handle_dazpy_error(e)
 
 
+# Server returns DAZ-managed method names; normalise to the documented names.
+_SAVE_COPY_METHOD = {
+    "copy": "file-copy",
+    "serialize": "save-restore",
+    "serialize+restore": "save-restore",
+}
+
+
 @mcp.tool()
 async def daz_save_scene_copy(path: str) -> dict[str, Any]:
     """Save a copy of the current scene to a new path without changing the scene's filename.
@@ -147,11 +150,15 @@ async def daz_save_scene_copy(path: str) -> dict[str, Any]:
         - If the destination directory does not exist the server will raise an error.
     """
     try:
-        return await run_dazpy(lambda: get_scene().save_copy(path))
-    except ToolError:
-        raise
-    except Exception as e:
-        handle_dazpy_error(e)
+        response = await get_http_client().post("/scene/save-copy", json={"path": path})
+        check_response(response)
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.TimeoutException) as exc:
+        handle_network_error(exc)
+    data = response.json()
+    if not data.get("ok"):
+        raise ToolError(data.get("error") or "Save a copy failed")
+    data["method"] = _SAVE_COPY_METHOD.get(data.get("method"), data.get("method"))
+    return data
 
 
 # ---------------------------------------------------------------------------
