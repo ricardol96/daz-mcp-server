@@ -86,6 +86,111 @@ async def daz_render_with_camera(
 
 
 @mcp.tool()
+async def daz_render_shot(
+    output_path: str,
+    width: int = 1280,
+    height: int = 720,
+    camera: str | None = None,
+    quality: str = "good",
+    engine: str = "iray",
+) -> dict[str, Any]:
+    """High-level render helper: configure and render a still, then verify it.
+
+    Wraps scene-health check, render-output/dimension setup, camera selection,
+    quality/engine, and an async render-with-wait into a single call so the AI
+    can produce a usable image in one step. Behavior mirrors what was manually
+    verified in DAZ Studio (camera-active render + file output).
+
+    Args:
+        output_path: Absolute destination path (e.g. "C:/renders/hero.png").
+                    Format from extension (.png/.jpg).
+        width: Render width in pixels (default 1280).
+        height: Render height in pixels (default 720).
+        camera: Camera node label to render from (e.g. "Camera 1 [Front]"). If
+                omitted, uses the current active viewport camera.
+        quality: Render quality preset passed to daz_set_render_quality
+                 ("draft", "low", "good", "high", "final", "highest").
+        engine: Passed to the async render params ("iray", "nvidia").
+
+    Returns:
+        - output_path, width, height: the actual settings used
+        - file_exists, file_size_bytes: verification the image was written
+        - render: the underlying render result (camera, duration_ms, ...)
+        - scene_health: scene-health snapshot before rendering
+
+    Example:
+        daz_render_shot(
+            "C:/renders/hero.png", width=1920, height=1080,
+            camera="Camera 1 [Front]", quality="high",
+        )
+    """
+    import asyncio
+    import os
+    from pathlib import Path
+
+    from .._mcp import _execute_render
+
+    # 0) Optional scene-health preamble (best-effort; never fail on it).
+    scene_health: dict[str, Any] | None = None
+    try:
+        from .scene import daz_scene_health
+
+        scene_health = await daz_scene_health()
+    except Exception:
+        scene_health = None
+
+    # 1) Configure output + dimensions.
+    output_dir = Path(output_path).parent
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True, exist_ok=True)
+    await daz_set_render_output(output_path=output_path, width=width, height=height)
+
+    # 2) Quality (best-effort; some presets may not exist on custom engines).
+    if quality:
+        try:
+            await daz_set_render_quality(quality)
+        except Exception:
+            pass
+
+    # 3) Camera + engine go straight into the async render invocation.
+    params: dict[str, Any] = {
+        "outputPath": output_path,
+        "width": width,
+        "height": height,
+        "engine": engine,
+    }
+    if camera:
+        params["cameraLabel"] = camera
+
+    render_result: dict[str, Any] = {}
+    try:
+        async_res = await _execute_render(params)
+        req_id = async_res.get("request_id")
+        if req_id:
+            render_result = await daz_get_request_result(req_id, wait=True)
+        else:
+            render_result = async_res
+    except Exception as exc:
+        render_result = {
+            "error": str(exc),
+            "note": "Async render failed; output config was still applied.",
+        }
+
+    # 4) Verify output file.
+    size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+    return {
+        "output_path": output_path,
+        "width": width,
+        "height": height,
+        "file_exists": os.path.exists(output_path),
+        "file_size_bytes": size,
+        "camera": camera,
+        "scene_health": scene_health,
+        "render": render_result,
+    }
+
+
+@mcp.tool()
 async def daz_get_render_settings() -> dict[str, Any]:
     """Get current render settings and configuration.
 

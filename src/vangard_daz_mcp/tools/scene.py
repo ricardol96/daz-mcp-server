@@ -61,11 +61,199 @@ async def daz_load_file(
     Returns:
       - success: true on success
       - file: the path that was loaded
+      - node_delta: change in scene totalNodes after load (positive = added)
+      - warning: set when the load produced only a tiny node delta, which may
+                 indicate a broken/partial import (e.g. missing textures or
+                 an asset relying on a base figure not present)
     """
-    return await _execute_by_id(
+    before = await daz_scene_info()
+    before_total = int(before.get("totalNodes", 0) or 0)
+
+    res = await _execute_by_id(
         "vangard-load-file",
         {"filePath": file_path, "merge": bool(merge)},
     )
+
+    warning: str | None = None
+    try:
+        after = await daz_scene_info()
+        after_total = int(after.get("totalNodes", 0) or 0)
+        delta = after_total - before_total
+        # A near-zero node delta is fine for material/pose/shader presets (they
+        # attach to existing surfaces), but suspicious for scenes/figures/props.
+        kind_ok = "either"
+        try:
+            from .library import classify_kind_sync
+
+            kind_ok = classify_kind_sync(file_path)  # e.g. "material", "pose", ...
+        except Exception:
+            kind_ok = "unknown"
+        low_delta_types = {"material", "pose", "shader", "unknown"}
+        if delta <= 2 and kind_ok not in low_delta_types:
+            warning = (
+                "Load produced a very small node delta "
+                f"({delta}) for an asset classified as '{kind_ok}'. The file may "
+                "be incomplete, require a base figure, or have unresolvable "
+                "textures. Use daz_inspect_asset for details."
+            )
+    except Exception:
+        delta = 0
+
+    return {"success": True, "file": file_path, **res, "node_delta": delta, "warning": warning}
+
+
+@mcp.tool()
+async def daz_load_character(
+    preset_path: str,
+    base_figure: str | None = None,
+    auto: bool = True,
+) -> dict[str, Any]:
+    """Load a character **preset** correctly: resolve its base figure, then apply it.
+
+    Many DAZ characters are shipped as *presets* (skins/character sets) that
+    must be applied onto an existing base figure (e.g. "Genesis 8 Basic
+    Female"). Loading a preset on its own silently produces a partial/incomplete
+    figure. This tool:
+
+      1. Inspects the preset's DUF to determine whether it needs a base.
+      2. If ``auto`` and no base figure is present in the scene, resolves the
+         correct base via daz_list_base_figures() and loads it first.
+      3. Applies the preset onto the base and verifies a full skeleton loaded.
+
+    Args:
+        preset_path: Absolute path to the character preset .duf.
+        base_figure: Optional explicit base figure .duf path. If None, one is
+                     auto-resolved from content libraries (requires auto=True).
+        auto: When True (default), auto-resolve and load a base figure if the
+              scene lacks a compatible one.
+
+    Returns:
+        - inspected: {kind, requires_base, fits_base} from daz_inspect_asset
+        - base_loaded: base figure path that was loaded (or None)
+        - scene: fresh scene info after loading
+        - loaded: "preset" | "base" | "none"
+        - suggestions: next-step guidance (e.g. add hair, lights, camera)
+
+    Example:
+        r = daz_load_character(
+            "C:/Users/ricar/Documents/DAZ 3D/Studio/My Library"
+            "/People/Genesis 8 Female/Characters/Carmen.duf"
+        )
+    """
+    import json as _j
+
+    from .library import daz_inspect_asset, daz_list_base_figures
+
+    # 1) Always inspect the asset deterministically.
+    inspected = await daz_inspect_asset(preset_path)
+    kind = inspected.get("kind", "unknown")
+    needs_base = bool(inspected.get("requires_base", False))
+    fits_base = inspected.get("fits_base", "") or ""
+
+    base_loaded: str | None = None
+    loaded_what = "none"
+
+    # 2) Determine whether a usable base is already in the scene.
+    scene = await daz_scene_info()
+    current_figures = [f["label"] for f in scene.get("figures", [])]
+
+    if needs_base and not current_figures:
+        # No figure present — load the base if possible (auto).
+        if not auto:
+            raise ToolError(
+                f"{preset_path} requires a base figure but the scene is empty "
+                "and auto base-loading is disabled. Load a base first."
+            )
+        base_path = base_figure or await _resolve_base_path(fits_base)
+        if not base_path:
+            raise ToolError(
+                f"Could not auto-resolve a base figure for '{fits_base or 'this character'}'. "
+                "Specify base_figure explicitly."
+            )
+        # Load base (merge=False replaces the scene so we start clean).
+        await daz_load_file(base_path, merge=False)
+        base_loaded = base_path
+        loaded_what = "base"
+        scene = await daz_scene_info()
+
+    if kind in ("full_character", "character_set", "clothing", "hair"):
+        await daz_load_file(preset_path, merge=True)
+        loaded_what = "preset"
+        scene = await daz_scene_info()
+
+    # 3) Verify the result actually produced a full figure.
+    figures_after = scene.get("figures", [])
+    suggestions = []
+    if not figures_after:
+        suggestions.append("No full figure present after loading — the asset may be a "
+                           "material/accessory preset needing a base already in the scene.")
+    if needs_base and base_loaded:
+        suggestions.append(
+            f"Loaded base '{base_loaded}' and applied the character — "
+            "now add hair, clothing, lights, and a camera."
+        )
+
+    return {
+        "inspected": inspected,
+        "base_loaded": base_loaded,
+        "figure_labels": [f["label"] for f in figures_after],
+        "loaded": loaded_what,
+        "suggestions": suggestions,
+        "scene": scene,
+    }
+
+
+async def _resolve_base_path(fits_base: str, explicit: str | None = None) -> str | None:
+    """Resolve the best base .duf under a generation folder (deterministic)."""
+    from .library import resolve_base_file
+
+    if explicit:
+        return explicit
+    return resolve_base_file(fits_base)
+
+
+@mcp.tool()
+async def daz_scene_health() -> dict[str, Any]:
+    """Return a deterministic snapshot for readiness checks.
+
+    Unlike daz_scene_info, this includes per-figure bone counts, total node
+    counts and label inventory (for completeness checks), plus light/camera/
+    prop tallies and a render-ready checklist.
+
+    Returns:
+      - totalNodes: raw scene node count
+      - figures: [{name, label, boneCount}]
+      - lights / cameras / props: counts
+      - node_count (labels): total label list length
+      - render_ready: {figure, lights, camera, has_output} booleans
+      - delta: node count delta since last snapshot (if tracked)
+
+    Example:
+        h = await daz_scene_health()
+        if not h["render_ready"]["lights"]:
+            print("Scene has no lights — add lighting before rendering.")
+    """
+    data = await _execute_by_id("vangard-scene-health", None)
+    figures = data.get("figures", [])
+    total = int(data.get("totalNodes", 0) or 0)
+    lights = int(data.get("lights", 0) or 0)
+    cameras = int(data.get("cameras", 0) or 0)
+    props = int(data.get("props", 0) or 0)
+
+    return {
+        "totalNodes": total,
+        "figures": [{"name": f.get("name"), "label": f.get("label"), "boneCount": f.get("boneCount")} for f in figures],
+        "lights": lights,
+        "cameras": cameras,
+        "props": props,
+        "node_label_count": len(data.get("nodeLabels", [])),
+        "render_ready": {
+            "figure": len(figures) > 0,
+            "lights": lights > 0,
+            "camera": cameras > 0,
+            "has_output": False,  # set after daz_set_render_output
+        },
+    }
 
 
 @mcp.tool()

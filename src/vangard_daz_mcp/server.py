@@ -29,6 +29,7 @@ def _tool_module_names() -> list[str]:
         "material",
         "utility",
         "content",
+        "library",
         "cinematic",
         "wardrobe",
     ]

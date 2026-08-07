@@ -6418,6 +6418,146 @@ _SET_RENDER_OUTPUT_SCRIPT = """\
 """
 
 # ---------------------------------------------------------------------------
+# Phase 6.7: Content library introspection (deterministic helpers)
+# ---------------------------------------------------------------------------
+
+# Returns {libraries: [{full_path, name, is_public, duf_count, duf_count_capped}], count}
+# Enumerate all content directories registered in DAZ Studio from App.getContentMgr().
+_LIST_LIBRARIES_SCRIPT = """\
+(function(){
+    var args = getArguments()[0] || {};
+    var contentMgr = App.getContentMgr();
+    var out = [];
+
+    function walkCount(path) {
+        var total = 0;
+        var capped = false;
+        var stack = [path];
+        var seen = {};
+        var iterations = 0;
+        while (stack.length > 0 && iterations < 20000) {
+            iterations++;
+            var d = new DzDir(stack.pop());
+            if (!d.exists()) continue;
+            var files = d.entryList(["*.duf"], DzDir.Files | DzDir.NoDotAndDotDot);
+            if (files && files.length) total += files.length;
+            var subs = d.entryList([], DzDir.Dirs | DzDir.NoDotAndDotDot);
+            for (var j = 0; j < subs.length; j++) {
+                var child = d.absoluteFilePath(subs[j]);
+                if (seen[child]) continue;
+                seen[child] = true;
+                stack.push(child);
+            }
+        }
+        if (iterations >= 20000) capped = true;
+        return {duf_count: total, duf_count_capped: capped};
+    }
+
+    for (var i = 0; i < contentMgr.getNumContentDirectories(); i++) {
+        var dir = contentMgr.getContentDirectory(i);
+        if (!dir) continue;
+        var fullPath = dir.fullPath;
+        var stats = walkCount(fullPath);
+        var isPublic = fullPath.indexOf("/Public/") >= 0 || fullPath.indexOf("\\\\Public\\\\") >= 0;
+        out.push({
+            full_path: fullPath,
+            name: dir.name || fullPath,
+            is_public: isPublic,
+            duf_count: stats.duf_count,
+            duf_count_capped: stats.duf_count_capped
+        });
+    }
+
+    out.sort(function(a, b) { return a.full_path < b.full_path ? -1 : a.full_path > b.full_path ? 1 : 0; });
+    return {libraries: out, count: out.length};
+})()
+"""
+
+# Returns {generation, count, bases: [{generation, filename, full_path}]}
+# Scans each content root for top-level .duf base figures directly under People/<generation>/.
+_LIST_BASE_FIGURES_SCRIPT = """\
+(function(){
+    var args = getArguments()[0] || {};
+    var contentMgr = App.getContentMgr();
+    var generation = args.generation || "";
+    var bases = [];
+    var seen = {};
+
+    for (var i = 0; i < contentMgr.getNumContentDirectories(); i++) {
+        var dir = contentMgr.getContentDirectory(i);
+        if (!dir) continue;
+        var peopleDir = new DzDir(dir.fullPath + "/People");
+        if (!peopleDir.exists()) continue;
+
+        var gens = peopleDir.entryList([], DzDir.Dirs | DzDir.NoDotAndDotDot);
+        for (var j = 0; j < gens.length; j++) {
+            var gen = gens[j];
+            if (generation && gen.toLowerCase().indexOf(generation.toLowerCase()) < 0 &&
+                generation.toLowerCase().indexOf(gen.toLowerCase()) < 0) {
+                continue;
+            }
+            var genDir = new DzDir(peopleDir.absoluteFilePath(gen));
+            var files = genDir.entryList(["*.duf"], DzDir.Files | DzDir.NoDotAndDotDot);
+            for (var k = 0; k < files.length; k++) {
+                var fname = files[k];
+                var key = gen + "/" + fname;
+                if (seen[key]) continue;
+                seen[key] = true;
+                bases.push({
+                    generation: gen,
+                    filename: fname,
+                    full_path: genDir.absoluteFilePath(fname)
+                });
+            }
+        }
+    }
+
+    bases.sort(function(a, b) { return a.full_path < b.full_path ? -1 : a.full_path > b.full_path ? 1 : 0; });
+    return {generation: generation || "all", bases: bases, count: bases.length};
+})()
+"""
+
+# Returns {totalNodes, figures: [{name, label, boneCount}], lights, cameras, nodeLabels:[...]}
+# Deterministic scene snapshot: labels are raw scene node labels for complete-completeness checks.
+_SCENE_HEALTH_SCRIPT = """\
+(function(){
+    function safe(fn, dflt) { try { return fn(); } catch(e) { return dflt; } }
+
+    var figures = [];
+    for (var i = 0; i < Scene.getNumSkeletons(); i++) {
+        var s = Scene.getSkeleton(i);
+        var parent = safe(function(){ return s.getNodeParent(); }, null);
+        if (parent && safe(function(){ return parent.inherits("DzFigure"); }, false)) continue;
+        figures.push({
+            name: safe(function(){ return s.getName(); }, ""),
+            label: safe(function(){ return s.getLabel(); }, ""),
+            boneCount: safe(function(){ return s.getNumBones ? s.getNumBones() : -1; }, -1)
+        });
+    }
+
+    var lights = 0, cameras = 0, props = 0;
+    var labels = [];
+    for (var j = 0; j < Scene.getNumNodes(); j++) {
+        var n = Scene.getNode(j);
+        labels.push(safe(function(){ return n.getLabel(); }, "?"));
+        var cls = safe(function(){ return n.getClassName(); }, "");
+        if (cls === "DzLight") lights++;
+        else if (cls === "DzCamera") cameras++;
+        else if (cls === "DzProp") props++;
+    }
+
+    return {
+        totalNodes: Scene.getNumNodes(),
+        figures: figures,
+        lights: lights,
+        cameras: cameras,
+        props: props,
+        nodeLabels: labels
+    };
+})()
+"""
+
+# ---------------------------------------------------------------------------
 # Phase 5: Pose reset
 # ---------------------------------------------------------------------------
 
@@ -7417,6 +7557,18 @@ _REGISTRY: dict[str, tuple[str, str]] = {
     "vangard-browse-category": (
         "List .duf files in a content library category path across all content directories",
         _BROWSE_CATEGORY_SCRIPT,
+    ),
+    "vangard-list-libraries": (
+        "List all registered DAZ content directories with duf counts and public/shared flag",
+        _LIST_LIBRARIES_SCRIPT,
+    ),
+    "vangard-list-base-figures": (
+        "Scan People/<generation> folders across all content roots for base figure .duf files",
+        _LIST_BASE_FIGURES_SCRIPT,
+    ),
+    "vangard-scene-health": (
+        "Return a deterministic scene snapshot (figure bone counts, node labels, light/camera counts)",
+        _SCENE_HEALTH_SCRIPT,
     ),
     # Phase 2: Scene composition
     "vangard-apply-composition-rule": (

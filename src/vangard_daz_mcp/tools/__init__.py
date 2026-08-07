@@ -12,5 +12,6 @@ from . import animation     # noqa: F401
 from . import material      # noqa: F401
 from . import utility       # noqa: F401
 from . import content       # noqa: F401
+from . import library       # noqa: F401
 from . import cinematic     # noqa: F401
 from . import wardrobe      # noqa: F401

@@ -291,6 +291,9 @@ async def test_daz_render_with_output_path(mock_daz):
 # ---------------------------------------------------------------------------
 
 async def test_daz_load_file_merge(mock_daz):
+    mock_daz.post("/scripts/vangard-scene-info/execute").mock(
+        return_value=_ok({"totalNodes": 5, "figures": []})
+    )
     mock_daz.post("/scripts/vangard-load-file/execute").mock(
         return_value=_ok({"success": True, "file": "C:/scenes/char.duf"})
     )
@@ -300,6 +303,9 @@ async def test_daz_load_file_merge(mock_daz):
 
 
 async def test_daz_load_file_replace(mock_daz):
+    mock_daz.post("/scripts/vangard-scene-info/execute").mock(
+        return_value=_ok({"totalNodes": 5, "figures": []})
+    )
     mock_daz.post("/scripts/vangard-load-file/execute").mock(
         return_value=_ok({"success": True, "file": "C:/scenes/scene.duf"})
     )
@@ -308,6 +314,9 @@ async def test_daz_load_file_replace(mock_daz):
 
 
 async def test_daz_load_file_not_found(mock_daz):
+    mock_daz.post("/scripts/vangard-scene-info/execute").mock(
+        return_value=_ok({"totalNodes": 5, "figures": []})
+    )
     mock_daz.post("/scripts/vangard-load-file/execute").mock(return_value=_fail("File not found: C:/missing.duf"))
     with pytest.raises(ToolError, match="File not found"):
         await daz_load_file("C:/missing.duf")
