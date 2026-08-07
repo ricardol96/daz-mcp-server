@@ -6393,21 +6393,23 @@ _SET_RENDER_OUTPUT_SCRIPT = """\
     var renderMgr = App.getRenderMgr();
     var opts = renderMgr.getRenderOptions();
     var changed = {};
+    var warnings = [];
     if (args.outputPath) {
         opts.renderImgFilename = args.outputPath;
         opts.renderImgToId = 0;  // 0 = render to file
         changed.output_path = args.outputPath;
     }
     if (args.width !== undefined && args.width !== null) {
-        opts.aspectWidth = args.width;
-        changed.width = args.width;
+        try { opts.aspectWidth = args.width; changed.width = args.width; }
+        catch (e) { warnings.push("width: aspectWidth is read-only (" + e + "); width will be honored by the render submission"); }
     }
     if (args.height !== undefined && args.height !== null) {
-        opts.aspectHeight = args.height;
-        changed.height = args.height;
+        try { opts.aspectHeight = args.height; changed.height = args.height; }
+        catch (e) { warnings.push("height: aspectHeight is read-only (" + e + "); height will be honored by the render submission"); }
     }
     return {
         changed: changed,
+        warnings: warnings,
         current: {
             output_path: opts.renderImgFilename || null,
             width: opts.aspectWidth || null,
@@ -7356,6 +7358,543 @@ _EXPORT_SCENE_SCRIPT = """\
 })()
 """
 
+# ---------------------------------------------------------------------------
+# Phase 7: Color grading + Iray post-process
+#
+# These scripts target two real Iray settings nodes exposed by DAZ Studio:
+#   - "Tonemapper Options"      – photographic tone-mapping (EV / ISO / Shutter /
+#                                  Aperture / Saturation / Gamma / Vignetting /
+#                                  Burn Highlights / Crush Blacks / White Point)
+#   - "Environment Options"     – environment mode (Dome Only / Dome & Scene /
+#                                  Scene Only), Draw Dome, Environment
+#                                  Intensity, Dome Rotation, Sun-Sky controls
+#
+# Color-grading workflow:
+#   1. daz_set_environment_visibility(...) so the HDR shows as a backdrop
+#   2. daz_apply_tone_mapping(...) or daz_apply_photographic_look(preset)
+#   3. daz_set_advanced_iray_settings(...) for denoiser / caustics / pixel filter
+#   4. daz_render_shot(...)
+# ---------------------------------------------------------------------------
+
+# args: {tone_mapping_enable, exposure_value, shutter_speed, aperture, film_iso,
+#        cm2_factor, vignetting, white_point_scale, white_point_color,
+#        burn_highlights_per_component, burn_highlights, crush_blacks,
+#        saturation, gamma}
+# Color values: white_point_color = [r, g, b] in 0..1 (will be converted to
+#   signed 24-bit color like DAZ's white point expects).
+# Returns: {applied: [{name, value}], not_found: [name], current: {name: value}}
+_APPLY_TONE_MAPPING_SCRIPT = """\
+(function(){
+    var args = getArguments()[0] || {};
+    var node = Scene.findNodeByLabel("Tonemapper Options");
+    if (!node) throw "Tonemapper Options node not found - open Render Settings to add it";
+
+    var fields = {
+        "Tone Mapping Enable":         args.tone_mapping_enable,
+        "Exposure Value":              args.exposure_value,
+        "Shutter Speed":               args.shutter_speed,
+        "Aperture":                    args.aperture,
+        "Film ISO":                    args.film_iso,
+        "cm2 Factor":                  args.cm2_factor,
+        "Vignetting":                  args.vignetting,
+        "White Point Scale":           args.white_point_scale,
+        "Burn Highlights Per Component": args.burn_highlights_per_component,
+        "Burn Highlights":             args.burn_highlights,
+        "Crush Blacks":                args.crush_blacks,
+        "Saturation":                  args.saturation,
+        "Gamma":                       args.gamma
+    };
+
+    var applied = [];
+    var notFound = [];
+    Object.keys(fields).forEach(function(name) {
+        if (fields[name] === undefined) return;
+        var p = node.findProperty(name);
+        if (p) {
+            p.setValue(fields[name]);
+            applied.push({name: name, value: String(p.getValue())});
+        } else {
+            notFound.push(name);
+        }
+    });
+
+    // White point is a color property
+    if (args.white_point_color && args.white_point_color.length === 3) {
+        var wp = node.findProperty("White Point");
+        if (wp) {
+            var r = Math.round(args.white_point_color[0] * 255);
+            var g = Math.round(args.white_point_color[1] * 255);
+            var b = Math.round(args.white_point_color[2] * 255);
+            // DAZ color: 0xAARRGGBB (A=FF, R in high byte of RGB)
+            var col = (0xFF << 24) | (r << 16) | (g << 8) | b;
+            wp.setValue(col);
+            applied.push({name: "White Point", value: String(wp.getValue())});
+        } else {
+            notFound.push("White Point");
+        }
+    }
+
+    var current = {};
+    var allNames = ["Tone Mapping Enable","Exposure Value","Shutter Speed","Aperture",
+        "Film ISO","cm2 Factor","Vignetting","White Point Scale","White Point",
+        "Burn Highlights","Crush Blacks","Saturation","Gamma"];
+    for (var k = 0; k < allNames.length; k++) {
+        var pn = node.findProperty(allNames[k]);
+        if (pn) current[allNames[k]] = String(pn.getValue());
+    }
+    return {applied: applied, not_found: notFound, current: current};
+})()
+"""
+
+# args: {preset: "golden_hour" | "moody_noir" | "high_key" | "low_key" |
+#        "vintage_film" | "fashion_editorial" | "cinematic_teal_orange" |
+#        "soft_portrait" | "dramatic_mono"}
+# Returns: {preset, preset_description, applied: [...], not_found: [...]}
+# Presets are tuned for Iray photographic tone-mapping. Adjust to taste.
+_APPLY_PHOTOGRAPHIC_LOOK_SCRIPT = """\
+(function(){
+    var args = getArguments()[0] || {};
+    var preset = args.preset;
+    if (!preset) throw "preset is required (one of: golden_hour, moody_noir, high_key, low_key, vintage_film, fashion_editorial, cinematic_teal_orange, soft_portrait, dramatic_mono)";
+
+    // Each preset: photographic tone-map values + a warm/cool white point
+    var PRESETS = {
+        golden_hour: {
+            description: "Warm low-sun look: low EV, low ISO, soft saturation, mild vignetting",
+            exposure_value: 12.0,
+            shutter_speed: 100.0,
+            aperture: 2.8,
+            film_iso: 100,
+            saturation: 1.35,
+            gamma: 1.0,
+            vignetting: 0.45,
+            burn_highlights: 0.65,
+            crush_blacks: 0.10,
+            white_point_scale: 1.0,
+            white_point_color: [1.00, 0.92, 0.78]   // warm
+        },
+        moody_noir: {
+            description: "Dark, low-key, desaturated with crushed blacks and strong vignetting",
+            exposure_value: 9.0,
+            shutter_speed: 200.0,
+            aperture: 4.0,
+            film_iso: 200,
+            saturation: 0.55,
+            gamma: 1.10,
+            vignetting: 0.85,
+            burn_highlights: 0.80,
+            crush_blacks: 0.45,
+            white_point_scale: 1.0,
+            white_point_color: [0.86, 0.90, 1.00]   // cool blue cast
+        },
+        high_key: {
+            description: "Bright, airy, low contrast; soft skin, no vignetting",
+            exposure_value: 16.0,
+            shutter_speed: 200.0,
+            aperture: 5.6,
+            film_iso: 100,
+            saturation: 0.95,
+            gamma: 0.90,
+            vignetting: 0.0,
+            burn_highlights: 0.30,
+            crush_blacks: 0.0,
+            white_point_scale: 1.0,
+            white_point_color: [1.00, 1.00, 1.00]   // neutral
+        },
+        low_key: {
+            description: "Dark dramatic key with deep shadows and single warm accent",
+            exposure_value: 10.0,
+            shutter_speed: 160.0,
+            aperture: 2.0,
+            film_iso: 200,
+            saturation: 1.20,
+            gamma: 1.05,
+            vignetting: 0.70,
+            burn_highlights: 0.75,
+            crush_blacks: 0.35,
+            white_point_scale: 1.0,
+            white_point_color: [1.00, 0.95, 0.85]   // warm
+        },
+        vintage_film: {
+            description: "Faded film look: lower saturation, slight cool-white, mild crush",
+            exposure_value: 13.0,
+            shutter_speed: 125.0,
+            aperture: 4.0,
+            film_iso: 200,
+            saturation: 0.75,
+            gamma: 1.15,
+            vignetting: 0.35,
+            burn_highlights: 0.50,
+            crush_blacks: 0.20,
+            white_point_scale: 1.0,
+            white_point_color: [0.96, 0.96, 1.05]   // slight cool
+        },
+        fashion_editorial: {
+            description: "Crisp, neutral, high-detail editorial look",
+            exposure_value: 14.5,
+            shutter_speed: 160.0,
+            aperture: 5.6,
+            film_iso: 100,
+            saturation: 1.10,
+            gamma: 1.0,
+            vignetting: 0.20,
+            burn_highlights: 0.45,
+            crush_blacks: 0.05,
+            white_point_scale: 1.0,
+            white_point_color: [1.00, 1.00, 1.00]
+        },
+        cinematic_teal_orange: {
+            description: "Hollywood blockbuster: teal shadows, orange highlights, mid contrast",
+            exposure_value: 13.5,
+            shutter_speed: 100.0,
+            aperture: 2.8,
+            film_iso: 200,
+            saturation: 1.25,
+            gamma: 1.0,
+            vignetting: 0.50,
+            burn_highlights: 0.55,
+            crush_blacks: 0.15,
+            white_point_scale: 1.0,
+            white_point_color: [1.05, 0.95, 0.80]   // warm white
+        },
+        soft_portrait: {
+            description: "Beauty/portrait: bright, even, low contrast, soft skin",
+            exposure_value: 15.0,
+            shutter_speed: 160.0,
+            aperture: 4.0,
+            film_iso: 100,
+            saturation: 0.90,
+            gamma: 0.95,
+            vignetting: 0.10,
+            burn_highlights: 0.30,
+            crush_blacks: 0.0,
+            white_point_scale: 1.0,
+            white_point_color: [1.00, 0.98, 0.95]
+        },
+        dramatic_mono: {
+            description: "Black & white dramatic: high contrast, strong vignetting",
+            exposure_value: 12.5,
+            shutter_speed: 125.0,
+            aperture: 2.8,
+            film_iso: 100,
+            saturation: 0.0,
+            gamma: 1.05,
+            vignetting: 0.75,
+            burn_highlights: 0.70,
+            crush_blacks: 0.30,
+            white_point_scale: 1.0,
+            white_point_color: [1.00, 1.00, 1.00]
+        }
+    };
+
+    var p = PRESETS[preset];
+    if (!p) throw "Unknown preset: " + preset + " — valid: " + Object.keys(PRESETS).join(", ");
+
+    var node = Scene.findNodeByLabel("Tonemapper Options");
+    if (!node) throw "Tonemapper Options node not found - open Render Settings to add it";
+
+    // Enable tone mapping
+    var tm = node.findProperty("Tone Mapping Enable");
+    if (tm) tm.setValue(1);
+
+    var scalarFields = {
+        "Exposure Value":  p.exposure_value,
+        "Shutter Speed":   p.shutter_speed,
+        "Aperture":        p.aperture,
+        "Film ISO":        p.film_iso,
+        "Vignetting":      p.vignetting,
+        "Burn Highlights": p.burn_highlights,
+        "Crush Blacks":    p.crush_blacks,
+        "Saturation":      p.saturation,
+        "Gamma":           p.gamma,
+        "White Point Scale": p.white_point_scale
+    };
+    var applied = [];
+    var notFound = [];
+    Object.keys(scalarFields).forEach(function(name) {
+        var prop = node.findProperty(name);
+        if (prop) {
+            prop.setValue(scalarFields[name]);
+            applied.push({name: name, value: String(prop.getValue())});
+        } else {
+            notFound.push(name);
+        }
+    });
+    if (p.white_point_color && p.white_point_color.length === 3) {
+        var wp = node.findProperty("White Point");
+        if (wp) {
+            var r = Math.round(p.white_point_color[0] * 255);
+            var g = Math.round(p.white_point_color[1] * 255);
+            var b = Math.round(p.white_point_color[2] * 255);
+            var col = (0xFF << 24) | (r << 16) | (g << 8) | b;
+            wp.setValue(col);
+            applied.push({name: "White Point", value: String(wp.getValue())});
+        } else {
+            notFound.push("White Point");
+        }
+    }
+    return {preset: preset, description: p.description, applied: applied, not_found: notFound};
+})()
+"""
+
+# args: {environment_mode, draw_dome, dome_mode, environment_intensity,
+#        dome_rotation, environment_map, environment_tint, draw_ground,
+#        ss_time, ss_sun_disk_intensity, ss_latitude, ss_longitude, ss_day}
+# environment_mode: 0=Dome Only, 1=Dome and Scene, 2=Sun-Sky Only, 3=Scene Only
+# dome_mode:        0=Finite Dome, 1=Infinite Dome
+# environment_map:  0=Original, 1=Spherical, 2=Mirror Ball
+# Returns: {applied: [...], not_found: [...], current: {...}}
+_SET_ENVIRONMENT_VISIBILITY_SCRIPT = """\
+(function(){
+    var args = getArguments()[0] || {};
+    var node = Scene.findNodeByLabel("Environment Options");
+    if (!node) throw "Environment Options node not found - load an HDRI environment first";
+
+    var fields = {
+        "Environment Mode":         args.environment_mode,
+        "Draw Dome":                args.draw_dome,
+        "Dome Mode":                args.dome_mode,
+        "Environment Intensity":    args.environment_intensity,
+        "Dome Rotation":            args.dome_rotation,
+        "Environment Map":          args.environment_map,
+        "Draw Ground":              args.draw_ground,
+        "SS Time":                  args.ss_time,
+        "SS Sun Disk Intensity":    args.ss_sun_disk_intensity,
+        "SS Latitude":              args.ss_latitude,
+        "SS Longitude":             args.ss_longitude,
+        "SS Day":                   args.ss_day,
+        "Dome Scale Multiplier":    args.dome_scale_multiplier
+    };
+    var applied = [];
+    var notFound = [];
+    Object.keys(fields).forEach(function(name) {
+        if (fields[name] === undefined) return;
+        var p = node.findProperty(name);
+        if (p) {
+            p.setValue(fields[name]);
+            applied.push({name: name, value: String(p.getValue())});
+        } else {
+            notFound.push(name);
+        }
+    });
+    // Color (tint) is 0xAARRGGBB
+    if (args.environment_tint && args.environment_tint.length === 3) {
+        var et = node.findProperty("Environment Tint");
+        if (et) {
+            var r = Math.round(args.environment_tint[0] * 255);
+            var g = Math.round(args.environment_tint[1] * 255);
+            var b = Math.round(args.environment_tint[2] * 255);
+            var col = (0xFF << 24) | (r << 16) | (g << 8) | b;
+            et.setValue(col);
+            applied.push({name: "Environment Tint", value: String(et.getValue())});
+        }
+    }
+    var current = {};
+    var cur = ["Environment Mode","Draw Dome","Dome Mode","Environment Intensity",
+               "Dome Rotation","Environment Map","Environment Tint","Draw Ground",
+               "SS Time","SS Sun Disk Intensity","SS Latitude","SS Longitude","SS Day"];
+    for (var k = 0; k < cur.length; k++) {
+        var pn = node.findProperty(cur[k]);
+        if (pn) current[cur[k]] = String(pn.getValue());
+    }
+    return {applied: applied, not_found: notFound, current: current};
+})()
+"""
+
+# args: {max_samples, render_quality, max_time, filter_type, pixel_size, denoiser}
+# Uses App.getRenderMgr().getOptionHelper() for Max Samples / Render Quality.
+# Other settings (denoiser / pixel filter) are best-effort on the same helper.
+# Returns: {applied: [...], not_found: [...], current: {...}}
+_SET_ADVANCED_IRAY_SCRIPT = """\
+(function(){
+    var args = getArguments()[0] || {};
+    var mgr = App.getRenderMgr();
+    if (!mgr) throw "No render manager available";
+    var optHelper = mgr.getOptionHelper ? mgr.getOptionHelper() : null;
+    if (!optHelper) throw "Render option helper unavailable";
+
+    var fields = {
+        "Max Samples":    args.max_samples,
+        "Render Quality": args.render_quality,
+        "Max Time":       args.max_time,
+        "Pixel Filter":   args.filter_type,
+        "Pixel Size":     args.pixel_size
+    };
+    var applied = [];
+    var notFound = [];
+    Object.keys(fields).forEach(function(name) {
+        if (fields[name] === undefined) return;
+        var p = optHelper.findProperty(name);
+        if (p) {
+            p.setValue(fields[name]);
+            applied.push({name: name, value: String(p.getValue())});
+        } else {
+            notFound.push(name);
+        }
+    });
+    // Denoiser and Caustics are sometimes on the option helper with different labels
+    // depending on Iray version. Try common names.
+    var denoiseCandidates = ["Denoiser", "Denoise", "Denoising", "NVIDIA Denoiser", "Optix Denoiser"];
+    if (args.denoiser !== undefined) {
+        var foundDen = null;
+        for (var i = 0; i < denoiseCandidates.length; i++) {
+            var p = optHelper.findProperty(denoiseCandidates[i]);
+            if (p) { p.setValue(args.denoiser); applied.push({name: denoiseCandidates[i], value: String(p.getValue())}); foundDen = denoiseCandidates[i]; break; }
+        }
+        if (!foundDen) notFound.push("Denoiser (tried: " + denoiseCandidates.join(", ") + ")");
+    }
+    var causticCandidates = ["Caustics", "Enable Caustics", "Caustic"];
+    if (args.caustics !== undefined) {
+        var foundCau = null;
+        for (var j = 0; j < causticCandidates.length; j++) {
+            var p = optHelper.findProperty(causticCandidates[j]);
+            if (p) { p.setValue(args.caustics); applied.push({name: causticCandidates[j], value: String(p.getValue())}); foundCau = causticCandidates[j]; break; }
+        }
+        if (!foundCau) notFound.push("Caustics (tried: " + causticCandidates.join(", ") + ")");
+    }
+    var current = {};
+    var cur = ["Max Samples","Render Quality","Max Time","Pixel Filter","Pixel Size"];
+    for (var k = 0; k < cur.length; k++) {
+        var pn = optHelper.findProperty(cur[k]);
+        if (pn) current[cur[k]] = String(pn.getValue());
+    }
+    return {applied: applied, not_found: notFound, current: current};
+})()
+"""
+
+# args: {}
+# Returns: {tonemapper: {...}, environment: {...}, iray: {...}}
+_GET_COLOR_GRADE_SETTINGS_SCRIPT = """\
+(function(){
+    var out = {};
+    function snapshot(nodeLabel) {
+        var n = Scene.findNodeByLabel(nodeLabel);
+        if (!n) return null;
+        var pl = n.getPropertyList();
+        var props = {};
+        for (var i = 0; i < pl.length; i++) {
+            try { props[pl[i].assetId || pl[i].name] = String(pl[i].getValue()); } catch(e) {}
+        }
+        return props;
+    }
+    out.tonemapper = snapshot("Tonemapper Options");
+    out.environment = snapshot("Environment Options");
+    try {
+        var mgr = App.getRenderMgr();
+        var oh = mgr && mgr.getOptionHelper ? mgr.getOptionHelper() : null;
+        if (oh) {
+            var names = ["Max Samples","Render Quality","Max Time","Pixel Filter","Pixel Size"];
+            var iray = {};
+            for (var k = 0; k < names.length; k++) {
+                var p = oh.findProperty(names[k]);
+                if (p) iray[names[k]] = String(p.getValue());
+            }
+            out.iray = iray;
+        }
+    } catch(e) { out.irayErr = String(e).slice(0, 200); }
+    return out;
+})()
+"""
+
+
+# ---------------------------------------------------------------------------
+# Phase 7.2: env & sun presets (golden_hour_env, blue_hour_env, midday_env,
+#            overcast_env, night_env) — convenient one-shots for common looks
+# ---------------------------------------------------------------------------
+
+# args: {preset: "golden_hour" | "blue_hour" | "midday" | "overcast" | "night"}
+# Sets environment mode/intensity/dome rotation and the SS Time/Latitude/Longitude
+# to approximate a real sun position.
+_APPLY_ENVIRONMENT_LOOK_SCRIPT = """\
+(function(){
+    var args = getArguments()[0] || {};
+    var preset = args.preset;
+    if (!preset) throw "preset is required (golden_hour, blue_hour, midday, overcast, night)";
+
+    var PRESETS = {
+        golden_hour: {
+            description: "Low warm sun ~10° above horizon, dome visible, slight warm tint",
+            environment_mode: 0, draw_dome: 1, dome_mode: 1,
+            environment_intensity: 1.30, dome_rotation: 0.0,
+            draw_ground: 1, dome_scale_multiplier: 100,
+            ss_time: 28800,        // 08:00 UTC
+            ss_sun_disk_intensity: 6.0,
+            ss_latitude: 35.0, ss_longitude: -110.0, ss_day: 2459000
+        },
+        blue_hour: {
+            description: "Pre-dawn / post-sunset deep blue, low sun, cool cast",
+            environment_mode: 0, draw_dome: 1, dome_mode: 1,
+            environment_intensity: 0.80, dome_rotation: 0.0,
+            draw_ground: 1, dome_scale_multiplier: 100,
+            ss_time: 21600,        // 06:00 UTC
+            ss_sun_disk_intensity: 0.5,
+            ss_latitude: 35.0, ss_longitude: -110.0, ss_day: 2459000
+        },
+        midday: {
+            description: "High harsh sun, bright dome, neutral, hard shadows from ground",
+            environment_mode: 0, draw_dome: 1, dome_mode: 1,
+            environment_intensity: 1.80, dome_rotation: 0.0,
+            draw_ground: 1, dome_scale_multiplier: 100,
+            ss_time: 43200,        // 12:00 UTC
+            ss_sun_disk_intensity: 4.0,
+            ss_latitude: 35.0, ss_longitude: -110.0, ss_day: 2459000
+        },
+        overcast: {
+            description: "Diffuse soft sky, dome-only, no ground shadow, lower intensity",
+            environment_mode: 0, draw_dome: 1, dome_mode: 1,
+            environment_intensity: 0.70, dome_rotation: 0.0,
+            draw_ground: 0, dome_scale_multiplier: 100,
+            ss_time: 43200,
+            ss_sun_disk_intensity: 0.0,
+            ss_latitude: 35.0, ss_longitude: -110.0, ss_day: 2459000
+        },
+        night: {
+            description: "Dark, low-intensity sky, faint moon-like sun",
+            environment_mode: 0, draw_dome: 1, dome_mode: 1,
+            environment_intensity: 0.20, dome_rotation: 0.0,
+            draw_ground: 0, dome_scale_multiplier: 100,
+            ss_time: 0,
+            ss_sun_disk_intensity: 0.5,
+            ss_latitude: 35.0, ss_longitude: -110.0, ss_day: 2459000
+        }
+    };
+
+    var p = PRESETS[preset];
+    if (!p) throw "Unknown preset: " + preset + " - valid: " + Object.keys(PRESETS).join(", ");
+
+    var node = Scene.findNodeByLabel("Environment Options");
+    if (!node) throw "Environment Options node not found - load an HDRI first";
+
+    var fields = {
+        "Environment Mode":      p.environment_mode,
+        "Draw Dome":             p.draw_dome,
+        "Dome Mode":             p.dome_mode,
+        "Environment Intensity": p.environment_intensity,
+        "Dome Rotation":         p.dome_rotation,
+        "Draw Ground":           p.draw_ground,
+        "Dome Scale Multiplier": p.dome_scale_multiplier,
+        "SS Time":               p.ss_time,
+        "SS Sun Disk Intensity": p.ss_sun_disk_intensity,
+        "SS Latitude":           p.ss_latitude,
+        "SS Longitude":          p.ss_longitude,
+        "SS Day":                p.ss_day
+    };
+    var applied = [];
+    var notFound = [];
+    Object.keys(fields).forEach(function(name) {
+        var prop = node.findProperty(name);
+        if (prop) {
+            prop.setValue(fields[name]);
+            applied.push({name: name, value: String(prop.getValue())});
+        } else {
+            notFound.push(name);
+        }
+    });
+    return {preset: preset, description: p.description, applied: applied, not_found: notFound};
+})()
+"""
+
+
 # Registry entries: script_id → (description, script_text)
 # Registered with DazScriptServer on startup so high-level tools call by ID.
 _REGISTRY: dict[str, tuple[str, str]] = {
@@ -7800,6 +8339,44 @@ _REGISTRY: dict[str, tuple[str, str]] = {
     "vangard-export-scene": (
         "Export selected nodes to FBX or OBJ via DzExportMgr",
         _EXPORT_SCENE_SCRIPT,
+    ),
+    # Phase 7: Color grading + Iray post-process
+    "vangard-apply-tone-mapping": (
+        "Set photographic tone-mapping values on the Tonemapper Options node (EV, "
+        "shutter, aperture, ISO, saturation, gamma, vignetting, burn highlights, "
+        "crush blacks, white point) — the primary color-grading surface in DAZ Iray.",
+        _APPLY_TONE_MAPPING_SCRIPT,
+    ),
+    "vangard-apply-photographic-look": (
+        "Apply a named photographic color-grade preset (golden_hour, moody_noir, "
+        "high_key, low_key, vintage_film, fashion_editorial, cinematic_teal_orange, "
+        "soft_portrait, dramatic_mono). One shot for a tuned Iray look.",
+        _APPLY_PHOTOGRAPHIC_LOOK_SCRIPT,
+    ),
+    "vangard-set-environment-visibility": (
+        "Control how the HDRI environment appears: Environment Mode (Dome Only / "
+        "Dome and Scene / Sun-Sky Only / Scene Only), Draw Dome, Dome Mode, "
+        "Environment Intensity, Dome Rotation, and Sun-Sky controls. Use this to "
+        "make the HDR visible as a background rather than lighting only.",
+        _SET_ENVIRONMENT_VISIBILITY_SCRIPT,
+    ),
+    "vangard-set-advanced-iray": (
+        "Set advanced Iray render options: Max Samples, Render Quality, Max Time, "
+        "Pixel Filter, Pixel Size, Denoiser, Caustics. Best-effort — properties "
+        "depend on the active Iray version.",
+        _SET_ADVANCED_IRAY_SCRIPT,
+    ),
+    "vangard-get-color-grade-settings": (
+        "Snapshot the current Tonemapper Options, Environment Options, and "
+        "Iray render settings (all numeric property values).",
+        _GET_COLOR_GRADE_SETTINGS_SCRIPT,
+    ),
+    "vangard-apply-environment-look": (
+        "Apply a named environment preset (golden_hour, blue_hour, midday, "
+        "overcast, night). Sets Environment Mode, Draw Dome, Intensity, Dome "
+        "Rotation, and Sun-Sky position so the HDR backdrop + sun match a real "
+        "time of day.",
+        _APPLY_ENVIRONMENT_LOOK_SCRIPT,
     ),
 }
 

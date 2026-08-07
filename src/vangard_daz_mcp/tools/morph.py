@@ -436,67 +436,63 @@ async def daz_set_body_language(
     if not (0.0 <= intensity <= 1.0):
         raise ToolError(f"intensity must be between 0.0 and 1.0, got {intensity}")
 
-    script = """
-(function() {
-    var skel = Scene.findSkeletonByLabel(args.figureLabel);
-    if (!skel) return {success: false, error: "Figure not found: " + args.figureLabel};
+    script = f"""
+(function() {{
+    var skel = Scene.findSkeletonByLabel({json.dumps(figure_label)});
+    if (!skel) return {{success: false, error: "Figure not found: " + {json.dumps(figure_label)}}};
 
-    var postures = {
+    var postures = {{
         confident: [
-            {bone: "chestUpper", prop: "XRotate", value: 5.0},
-            {bone: "lShldr",     prop: "ZRotate", value: -5.0},
-            {bone: "rShldr",     prop: "ZRotate", value: 5.0}
-        ],
+            {{bone: "chestUpper", prop: "XRotate", value: 5.0}},
+            {{bone: "lShldr",     prop: "ZRotate", value: -5.0}},
+            {{bone: "rShldr",     prop: "ZRotate", value: 5.0}}
+        ] ,
         defensive: [
-            {bone: "chestUpper",  prop: "XRotate", value: -8.0},
-            {bone: "abdomenLower", prop: "XRotate", value: -3.0},
-            {bone: "lShldr",      prop: "ZRotate", value: 10.0},
-            {bone: "rShldr",      prop: "ZRotate", value: -10.0}
+            {{bone: "chestUpper",  prop: "XRotate", value: -8.0}},
+            {{bone: "abdomenLower", prop: "XRotate", value: -3.0}},
+            {{bone: "lShldr",      prop: "ZRotate", value: 10.0}},
+            {{bone: "rShldr",      prop: "ZRotate", value: -10.0}}
         ],
         relaxed: [
-            {bone: "chestUpper", prop: "XRotate", value: -3.0},
-            {bone: "lShldr",     prop: "ZRotate", value: 4.0},
-            {bone: "rShldr",     prop: "ZRotate", value: -4.0},
-            {bone: "neckLower",  prop: "XRotate", value: 2.0}
+            {{bone: "chestUpper", prop: "XRotate", value: -3.0}},
+            {{bone: "lShldr",     prop: "ZRotate", value: 4.0}},
+            {{bone: "rShldr",     prop: "ZRotate", value: -4.0}},
+            {{bone: "neckLower",  prop: "XRotate", value: 2.0}}
         ],
         tense: [
-            {bone: "chestUpper", prop: "XRotate", value: 4.0},
-            {bone: "lShldr",     prop: "ZRotate", value: -12.0},
-            {bone: "rShldr",     prop: "ZRotate", value: 12.0},
-            {bone: "neckLower",  prop: "XRotate", value: -3.0}
+            {{bone: "chestUpper", prop: "XRotate", value: 4.0}},
+            {{bone: "lShldr",     prop: "ZRotate", value: -12.0}},
+            {{bone: "rShldr",     prop: "ZRotate", value: 12.0}},
+            {{bone: "neckLower",  prop: "XRotate", value: -3.0}}
         ]
-    };
+    }};
 
-    var intensity   = args.intensity;
-    var adjustments = postures[args.posture];
+    var intensity   = {json.dumps(intensity)};
+    var adjustments = postures[{json.dumps(posture)}];
     var applied     = [];
     var notFound    = [];
 
-    for (var i = 0; i < adjustments.length; i++) {
+    for (var i = 0; i < adjustments.length; i++) {{
         var adj  = adjustments[i];
         var bone = skel.findBone(adj.bone);
-        if (!bone) { notFound.push(adj.bone); continue; }
+        if (!bone) {{ notFound.push(adj.bone); continue; }}
         var prop = bone.findProperty(adj.prop);
-        if (!prop) { notFound.push(adj.bone + "." + adj.prop); continue; }
+        if (!prop) {{ notFound.push(adj.bone + "." + adj.prop); continue; }}
         prop.setValue(adj.value * intensity);
-        applied.push({bone: adj.bone, property: adj.prop, value: adj.value * intensity});
-    }
+        applied.push({{bone: adj.bone, property: adj.prop, value: adj.value * intensity}});
+    }}
 
-    return {
+    return {{
         success:   true,
-        figure:    args.figureLabel,
-        posture:   args.posture,
+        figure:    {json.dumps(figure_label)},
+        posture:   {json.dumps(posture)},
         intensity: intensity,
         applied:   applied,
         not_found: notFound
-    };
-})();
+    }};
+}})();
 """
-    result = await _execute(script, {
-        "figureLabel": figure_label,
-        "posture": posture,
-        "intensity": intensity,
-    })
+    result = await _execute(script)
     return result
 
 

@@ -190,6 +190,35 @@ Sequence of real tool calls the render goes through, the QA, then render.
 5. QA: one half of face in shadow; strong rim.
 6. `daz_render_shot(..., engine="iray", quality="good")`.
 
+## 7. Color grading (the final 10% that matters)
+
+After composing + lighting, Iray's photographic tone mapper is the equivalent of
+a "color grade" pass — the same path-traced image at different tone-map settings
+looks like a different photo. Tools (see `.agents/skills/daz-render-workflow/SKILL.md`
+for the full list):
+
+- `daz_apply_photographic_look(preset)` — one-shot opinionated looks.
+  Pair with `daz_apply_environment_look(preset)` so the HDR backdrop matches.
+- `daz_apply_tone_mapping(...)` — individual knobs (EV / Shutter / Aperture / ISO /
+  Saturation / Gamma / Vignetting / Burn Highlights / Crush Blacks / White Point).
+- Pass `tone_preset=` and `env_preset=` to `daz_render_shot` for a one-shot graded
+  render; pass `iray_samples=8000` and `max_time=300` for a clean still.
+
+Recommended defaults by mood:
+
+| Mood        | tone_preset               | env_preset          | iray_samples |
+|-------------|---------------------------|---------------------|--------------|
+| Hero        | `cinematic_teal_orange`   | `golden_hour`       | 8000         |
+| Portrait    | `soft_portrait`           | `overcast`          | 5000         |
+| Editorial   | `fashion_editorial`       | `midday`            | 10000        |
+| Dramatic    | `moody_noir`              | `blue_hour`         | 5000         |
+| Vintage     | `vintage_film`            | `golden_hour`       | 5000         |
+| Film noir   | `dramatic_mono`           | `night`             | 5000         |
+
+Tune with `daz_apply_tone_mapping` (e.g. raise `exposure_value` for brighter, drop
+`aperture` for wider/more bokeh-feel, increase `vignetting` for darker edges,
+warm `white_point_color` for golden).
+
 ## 8. Anti-patterns (do NOT)
 
 - Flat frontal light with everything lit (looks clinical).
